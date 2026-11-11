@@ -13,8 +13,15 @@ use interprocess::local_socket::{prelude::*, GenericNamespaced, Stream};
 static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
 
 pub struct BrowserClient {
-    reader: BufReader<Stream>,
+    reader: Option<BufReader<Stream>>,
     token: String,
+}
+
+fn connect_stream() -> Result<BufReader<Stream>> {
+    let name = IPC_SOCKET_NAME.to_ns_name::<GenericNamespaced>()?;
+    let stream = Stream::connect(name)
+        .context("cannot connect to Browser Assistant; is its Chrome Native Host running?")?;
+    Ok(BufReader::new(stream))
 }
 
 impl BrowserClient {
@@ -27,26 +34,29 @@ impl BrowserClient {
         if token.is_empty() {
             bail!("Browser Assistant IPC token is empty");
         }
-        let name = IPC_SOCKET_NAME.to_ns_name::<GenericNamespaced>()?;
-        let stream = Stream::connect(name)
-            .context("cannot connect to Browser Assistant; is its Chrome Native Host running?")?;
-        Ok(Self { reader: BufReader::new(stream), token })
+        Ok(Self { reader: Some(connect_stream()?), token })
     }
 
-    /// Send one command and wait for its matching response.
+    /// Send one command. Each request uses a short-lived local IPC connection.
+    /// The client reconnects automatically for subsequent calls.
     pub fn execute(&mut self, command: BrowserCommand) -> Result<BrowserResponse> {
         let id = format!("desktop-{}-{}", std::process::id(), NEXT_REQUEST_ID.fetch_add(1, Ordering::Relaxed));
         let envelope = IpcEnvelope {
             token: self.token.clone(),
             request: BrowserRequest { id: id.clone(), command },
         };
+        let mut reader = match self.reader.take() {
+            Some(reader) => reader,
+            None => connect_stream()?,
+        };
+
         let mut payload = serde_json::to_vec(&envelope)?;
-        payload.push(b'\n');
-        self.reader.get_mut().write_all(&payload).context("writing IPC request")?;
-        self.reader.get_mut().flush()?;
+        payload.push(b'\\n');
+        reader.get_mut().write_all(&payload).context("writing IPC request")?;
+        reader.get_mut().flush()?;
 
         let mut line = String::new();
-        self.reader.read_line(&mut line).context("reading IPC response")?;
+        reader.read_line(&mut line).context("reading IPC response")?;
         if line.is_empty() {
             bail!("Browser Assistant IPC connection closed before a response");
         }
@@ -54,6 +64,8 @@ impl BrowserClient {
         if response.id.as_deref() != Some(id.as_str()) {
             bail!("IPC response id does not match the request");
         }
+        // The host currently serves one request per connection. Reconnect on the next execute().
+        drop(reader);
         Ok(response)
     }
 }
