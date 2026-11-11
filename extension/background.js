@@ -950,3 +950,19 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   })();
   return true;
 });
+
+
+// Keep the Native Messaging bridge available for the desktop app.
+// Chrome starts the service worker for these lifecycle events; connectNative()
+// launches the registered Native Host without requiring a popup click.
+function ensureNativeHostConnected(reason) {
+  try {
+    connectNative();
+    console.info("[Browser Assistant] Native Host connection requested:", reason);
+  } catch (error) {
+    console.warn("[Browser Assistant] Native Host connection failed:", reason, error);
+  }
+}
+
+chrome.runtime.onStartup.addListener(() => ensureNativeHostConnected("chrome_startup"));
+chrome.runtime.onInstalled.addListener(() => ensureNativeHostConnected("extension_installed"));
