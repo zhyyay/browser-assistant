@@ -8,6 +8,7 @@ pub enum BrowserCommand {
     GetPageInfo,
     GetXPosts { limit: Option<usize> },
     PostXTweet { text: String },
+    ReplyToXPost { post_id: String, text: String },
     GetFollowing { limit: Option<usize> },
     GetDomText { max_chars: Option<usize> },
     FindElements { selector: String, limit: Option<usize> },
