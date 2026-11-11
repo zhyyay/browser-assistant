@@ -141,15 +141,8 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
                 .find((link) => /^\\/[A-Za-z0-9_]{1,15}\\/?$/.test(link.getAttribute("href") || ""));
               const href = profileLink?.getAttribute("href") || null;
               const username = href ? href.replace(/^\\//, "").replace(/\\/$/, "") : null;
-              const displayName = compact(
-                [...(profileLink?.querySelectorAll("span") || [])]
-                  .map((node) => node.innerText)
-                  .find((value) => value && !value.trim().startsWith("@")) || profileLink?.innerText || "",
-                120
-              ).replace(/@?[A-Za-z0-9_]{1,15}/g, (value) => value.startsWith("@") ? "" : value).trim() || null;
               users.push({
                 username: username ? username.toLowerCase() : null,
-                ...(displayName ? { display_name: displayName } : {}),
                 profile_url: username ? new URL("/" + username, location.origin).href : null,
                 follow_status: username ? (/关注了你|Follows you/i.test(text) ? "mutual" : "not_mutual") : "unknown"
               });
