@@ -1,13 +1,16 @@
 {
   "manifest_version": 3,
   "name": "浏览器助手",
-  "description": "通过 Rust Native Messaging 提供受控的网页 DOM 读取与自动化能力。",
-  "version": "0.2.0",
+  "description": "通过 Rust Native Messaging 与 Chrome DevTools Protocol 提供受控的网页读取与自动化能力。",
+  "version": "0.3.0",
   "minimum_chrome_version": "105",
   "permissions": [
     "activeTab",
     "scripting",
     "tabs",
+    "tabGroups",
+    "storage",
+    "debugger",
     "nativeMessaging"
   ],
   "action": {
