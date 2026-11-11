@@ -17,6 +17,7 @@ document.querySelectorAll("[data-command]").forEach((button) => {
   button.addEventListener("click", () => {
     const params = {};
     if (button.dataset.selector) params.selector = button.dataset.selector;
+    if (button.dataset.limit) params.limit = Number(button.dataset.limit);
     void send({ type: "page_command", command: button.dataset.command, params });
   });
 });
