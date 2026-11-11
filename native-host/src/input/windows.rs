@@ -126,9 +126,14 @@ unsafe extern "system" fn collect_render(hwnd: Hwnd, param: Lparam) -> Bool {
     if len > 0 && IsWindowVisible(hwnd) != 0 {
         let class = String::from_utf16_lossy(&name[..len as usize]);
         if class == "Chrome_RenderWidgetHostHWND" {
-            let found = &mut *(param as *mut Option<Hwnd>);
-            *found = Some(hwnd);
-            return 0;
+            let mut rect = Rect { left: 0, top: 0, right: 0, bottom: 0 };
+            if GetWindowRect(hwnd, &mut rect) != 0 {
+                let area = i64::from(rect.right - rect.left) * i64::from(rect.bottom - rect.top);
+                let found = &mut *(param as *mut Option<(Hwnd, i64)>);
+                if found.as_ref().map(|(_, current_area)| area > *current_area).unwrap_or(true) {
+                    *found = Some((hwnd, area));
+                }
+            }
         }
     }
     1
@@ -139,9 +144,10 @@ fn chrome_bounds() -> Result<(Rect, Rect)> {
     if top.is_null() { bail!("没有前台浏览器窗口，请先激活 Chrome"); }
     let mut top_rect = Rect { left: 0, top: 0, right: 0, bottom: 0 };
     if unsafe { GetWindowRect(top, &mut top_rect) } == 0 { bail!("无法读取 Chrome 窗口位置"); }
-    let mut render = None;
+    let mut render = None::<(Hwnd, i64)>;
     unsafe { EnumChildWindows(top, Some(collect_render), &mut render as *mut _ as Lparam); }
-    let render = render.context("前台窗口中没有找到 Chrome 网页渲染区域；请激活 Chrome 网页标签后重试")?;
+    let render = render.map(|(hwnd, _)| hwnd)
+        .context("前台窗口中没有找到 Chrome 网页渲染区域；请激活 Chrome 网页标签后重试")?;
     let mut render_rect = Rect { left: 0, top: 0, right: 0, bottom: 0 };
     if unsafe { GetWindowRect(render, &mut render_rect) } == 0 { bail!("无法读取网页区域位置"); }
     Ok((top_rect, render_rect))
