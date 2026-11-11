@@ -27,3 +27,24 @@ impl BrowserClient {
         })
     }
 }
+
+
+    /// Reply to one exact post already parsed from the currently loaded X timeline.
+    ///
+    /// The post ID must come from GetXPosts. The extension opens that post's reply
+    /// dialog, verifies the target ID and typed text, submits once, and reports
+    /// sent or confirmation_unknown. Callers must not retry an uncertain result.
+    pub fn reply_to_x_post(&mut self, post_id: &str, text: &str) -> Result<BrowserResponse> {
+        let post_id = post_id.trim();
+        if !post_id.chars().all(|ch| ch.is_ascii_digit()) || !(5..=30).contains(&post_id.len()) {
+            anyhow::bail!("X 推文 ID 无效");
+        }
+        let content = text.trim();
+        if content.is_empty() {
+            anyhow::bail!("X 回复内容不能为空");
+        }
+        self.execute(BrowserCommand::ReplyToXPost {
+            post_id: post_id.to_owned(),
+            text: content.to_owned(),
+        })
+    }
