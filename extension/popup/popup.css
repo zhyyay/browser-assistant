@@ -32,3 +32,16 @@ button.primary-action {
 }
 button:disabled { opacity: .6; cursor: wait; }
 .hint { margin: 4px 0 8px; color: #687385; font-size: 11px; line-height: 1.45; }
+
+select {
+  display: block;
+  width: 100%;
+  margin: 4px 0 6px;
+  padding: 9px 10px;
+  border: 1px solid #d8dde5;
+  border-radius: 7px;
+  background: white;
+  color: #20242b;
+  font: inherit;
+}
+select:focus { outline: 2px solid #9bb7f5; border-color: #2458c6; }
