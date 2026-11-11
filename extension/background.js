@@ -10,6 +10,16 @@ async function getActiveTab() {
   return tab;
 }
 
+async function performHumanInput(params) {
+  const authorization = await nativeRequest("authorize_command", { action: "human_input" });
+  if (!authorization?.ok || !authorization.result?.authorized) {
+    throw new Error(authorization?.error || "Rust Host rejected human input");
+  }
+  const response = await nativeRequest("desktop_input", params, 30000);
+  if (!response?.ok) throw new Error(response?.error || "系统级鼠标/键盘操作失败");
+  return response.result;
+}
+
 async function executeInPage(command, params = {}, fixedTabId = null) {
   const tab = fixedTabId === null ? await getActiveTab() : await chrome.tabs.get(fixedTabId);
   const [injection] = await chrome.scripting.executeScript({
@@ -107,16 +117,14 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
           const homeLink = [...document.querySelectorAll('a[data-testid="AppTabBar_Home_Link"], a[href="/home"], a[href="https://x.com/home"]')]
             .find(visible);
           if (!homeLink) throw new Error("HOME_LINK_NOT_FOUND: 未找到 X 主页入口");
-          homeLink.click();
-          return { clicked: true, url: location.href };
+          const rect = rectOf(homeLink);
+          return { ...rect, url: location.href };
         }
         case "scroll_home_top": {
           if (location.hostname !== "x.com" || !/^\/home\/?$/.test(location.pathname)) {
             throw new Error("NOT_HOME_PAGE: 当前不是 x.com/home 页面");
           }
-          if (document.scrollingElement) document.scrollingElement.scrollTop = 0;
-          window.scrollTo({ top: 0, left: 0, behavior: "auto" });
-          return { scrolled_to_top: true, scroll_y: window.scrollY, url: location.href };
+          return { scrolled_to_top: false, scroll_y: window.scrollY, x: Math.floor(window.innerWidth / 2), y: Math.floor(window.innerHeight / 2), url: location.href };
         }
         case "has_x_composer": {
           if (location.hostname !== "x.com") throw new Error("PAGE_CHANGED: 当前不是 X 页面");
@@ -129,97 +137,60 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
             });
           return { ready: Boolean(editor), url: location.href };
         }
-        case "post_x_tweet": {
-          if (location.hostname !== "x.com") {
-            throw new Error("PAGE_CHANGED: 自动发帖只允许在 x.com 页面执行");
+        case "get_x_composer_rect": {
+          if (location.hostname !== "x.com") throw new Error("PAGE_CHANGED: 当前不是 X 页面");
+          const editor = [...document.querySelectorAll('[data-testid="tweetTextarea_0"], [role="textbox"][data-testid="tweetTextarea_0"]')]
+            .find((element) => {
+              if (!(element instanceof HTMLElement)) return false;
+              const rect = element.getBoundingClientRect();
+              const style = getComputedStyle(element);
+              return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+            });
+          if (!editor) throw new Error("COMPOSER_NOT_FOUND: 未找到 X 发帖编辑框");
+          if (editor.getAttribute("aria-disabled") === "true" || editor.getAttribute("contenteditable") === "false") {
+            throw new Error("COMPOSER_DISABLED: X 发帖编辑框当前不可用");
           }
-          const content = String(params.text ?? "").trim();
-          if (!content) throw new Error("INVALID_CONTENT: 发帖内容不能为空");
-
-          const bodyText = compact(document.body?.innerText || "", 16000);
-          if (/rate limit exceeded|too many requests|try again later|请求过于频繁|操作过于频繁|暂时限制了部分功能/i.test(bodyText)) {
-            throw new Error("RATE_LIMITED: 检测到 X 限流提示，未提交发帖");
-          }
-          if (/确认你的身份|验证你是人类|verify you are human|account access|账号访问受限|暂时锁定/i.test(bodyText)) {
-            throw new Error("CHALLENGE_DETECTED: 页面出现安全验证或账号访问限制，未提交发帖");
-          }
-
+          const existingText = compact(editor.innerText || editor.textContent || "", 10000);
+          if (existingText) throw new Error("COMPOSER_NOT_EMPTY: 编辑框已有草稿，拒绝覆盖");
+          return { ...rectOf(editor), existing_text: existingText };
+        }
+        case "verify_x_composer_text": {
+          const editor = document.querySelector('[data-testid="tweetTextarea_0"], [role="textbox"][data-testid="tweetTextarea_0"]');
+          const actual = compact(editor?.innerText || editor?.textContent || "", 10000);
+          const expected = compact(params.text || "", 10000);
+          return { matches: Boolean(editor) && actual === expected, actual, expected };
+        }
+        case "get_x_submit_button_rect": {
           const visible = (element) => {
             if (!(element instanceof HTMLElement)) return false;
             const rect = element.getBoundingClientRect();
             const style = getComputedStyle(element);
             return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
           };
-          const editor = [...document.querySelectorAll('[data-testid="tweetTextarea_0"], [role="textbox"][data-testid="tweetTextarea_0"]')]
-            .find(visible);
-          if (!editor) {
-            throw new Error("COMPOSER_NOT_FOUND: 未找到 X 发帖编辑框，请打开 X 发帖页面或发帖窗口");
-          }
-          if (editor.getAttribute("aria-disabled") === "true" || editor.getAttribute("contenteditable") === "false") {
-            throw new Error("COMPOSER_DISABLED: X 发帖编辑框当前不可用");
-          }
-          const existingText = compact(editor.innerText || editor.textContent || "", 10000);
-          if (existingText) {
-            throw new Error("COMPOSER_NOT_EMPTY: 编辑框已有内容，为避免覆盖草稿，已取消发帖");
-          }
-
-          editor.focus();
-          // X uses a contenteditable editor. Dispatch a real input event so its
-          // React state observes the inserted text before the submit button is read.
-          const selection = window.getSelection();
-          const range = document.createRange();
-          range.selectNodeContents(editor);
-          range.collapse(false);
-          selection?.removeAllRanges();
-          selection?.addRange(range);
-          const inserted = document.execCommand("insertText", false, content);
-          if (!inserted || compact(editor.innerText || editor.textContent || "", 10000) !== compact(content, 10000)) {
-            editor.textContent = content;
-            editor.dispatchEvent(new InputEvent("input", {
-              bubbles: true, inputType: "insertText", data: content
-            }));
-          }
-          await new Promise((resolve) => setTimeout(resolve, 250));
-          const actualText = compact(editor.innerText || editor.textContent || "", 10000);
-          if (actualText !== compact(content, 10000)) {
-            throw new Error("CONTENT_VERIFY_FAILED: 发帖内容写入后校验不一致，未点击提交");
-          }
-
-          const submitButton = [...document.querySelectorAll('[data-testid="tweetButton"], [data-testid="tweetButtonInline"]')]
-            .find((button) => visible(button) &&
-              !button.disabled && button.getAttribute("aria-disabled") !== "true");
-          if (!submitButton) {
-            throw new Error("SUBMIT_BUTTON_NOT_FOUND: 未找到可用的发帖按钮，内容尚未提交");
-          }
-
-          submitButton.click();
+          const button = [...document.querySelectorAll('[data-testid="tweetButton"], [data-testid="tweetButtonInline"]')]
+            .find((element) => visible(element) && !element.disabled && element.getAttribute("aria-disabled") !== "true");
+          if (!button) throw new Error("SUBMIT_BUTTON_NOT_FOUND: 未找到可用的发帖按钮");
+          return rectOf(button);
+        }
+        case "wait_x_post_confirmation": {
+          const visible = (element) => {
+            if (!(element instanceof HTMLElement)) return false;
+            const rect = element.getBoundingClientRect();
+            const style = getComputedStyle(element);
+            return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+          };
           const timeoutMs = Math.min(Math.max(Number(params.confirm_timeout_ms) || 8000, 3000), 15000);
           const startedAt = Date.now();
-          let confirmationText = null;
           while (Date.now() - startedAt < timeoutMs) {
             const toast = [...document.querySelectorAll('[data-testid="toast"], [role="alert"]')]
               .filter(visible)
               .map((node) => compact(node.innerText || node.textContent || "", 500))
               .find((value) => /你的贴已发送|你的帖子已发送|post sent|your post was sent|your post has been sent/i.test(value));
-            if (toast) {
-              confirmationText = toast;
-              break;
-            }
+            if (toast) return { status: "sent", submitted: true, confirmed: true, confirmation: toast };
             await new Promise((resolve) => setTimeout(resolve, 300));
           }
-
-          if (confirmationText) {
-            return {
-              status: "sent",
-              submitted: true,
-              confirmed: true,
-              confirmation: confirmationText
-            };
-          }
           return {
-            status: "confirmation_unknown",
-            submitted: true,
-            confirmed: false,
+            status: "confirmation_unknown", submitted: true, confirmed: false,
             message: "已点击发帖按钮，但未检测到明确的发送成功提示；请检查个人主页，勿直接重复提交"
           };
         }
@@ -358,8 +329,7 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
         case "click": {
           const element = document.querySelector(String(params.selector || ""));
           if (!(element instanceof HTMLElement)) throw new Error("click target not found or not an HTML element");
-          element.click();
-          return { clicked: true };
+          return rectOf(element);
         }
         case "type_text": {
           const element = document.querySelector(String(params.selector || ""));
@@ -367,27 +337,51 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
           if (!(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement || element.isContentEditable)) {
             throw new Error("target is not editable");
           }
-          element.focus();
-          if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
-            const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(element), "value")?.set;
-            setter?.call(element, String(params.text ?? ""));
-            element.dispatchEvent(new Event("input", { bubbles: true }));
-            element.dispatchEvent(new Event("change", { bubbles: true }));
-          } else {
-            element.textContent = String(params.text ?? "");
-            element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: String(params.text ?? "") }));
-          }
-          return { typed: true };
+          return { ...rectOf(element), tag_name: element.tagName.toLowerCase() };
+        }
+        case "verify_text": {
+          const element = document.querySelector(String(params.selector || ""));
+          const actual = compact(element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement ? element.value : element?.innerText || element?.textContent || "", 10000);
+          const expected = compact(params.text ?? "", 10000);
+          return { matches: Boolean(element) && actual === expected, actual, expected };
         }
         case "scroll":
-          window.scrollBy({ top: Number(params.delta_y) || 0, behavior: "auto" });
-          return { scroll_y: window.scrollY };
+          return { x: Math.floor(window.innerWidth / 2), y: Math.floor(window.innerHeight / 2), delta_y: Number(params.delta_y) || 0, scroll_y: window.scrollY };
         default:
           throw new Error("unsupported page command: " + command);
       }
     }
   });
-  return injection?.result ?? null;
+  const result = injection?.result ?? null;
+  if (!result) return result;
+
+  if (command === "click" || command === "click_home_link") {
+    const x = result.viewport_x + result.width / 2;
+    const y = result.viewport_y + result.height / 2;
+    await performHumanInput({ action: "click", x, y });
+    return { clicked: true, url: result.url || tab.url };
+  }
+  if (command === "type_text") {
+    await performHumanInput({
+      action: "type_text",
+      x: result.viewport_x + result.width / 2,
+      y: result.viewport_y + result.height / 2,
+      text: String(params.text ?? ""),
+      clear_first: true
+    });
+    const verified = await executeInPage("verify_text", { selector: params.selector, text: String(params.text ?? "") }, tab.id);
+    if (!verified?.matches) throw new Error("CONTENT_VERIFY_FAILED: 输入后回读校验不一致");
+    return { typed: true, cleared_first: true, verified: true };
+  }
+  if (command === "scroll") {
+    await performHumanInput({ action: "scroll", x: result.x, y: result.y, delta_y: result.delta_y });
+    return { scrolled: true, delta_y: result.delta_y };
+  }
+  if (command === "scroll_home_top") {
+    await performHumanInput({ action: "scroll", x: result.x, y: result.y, delta_y: -Math.max(1200, Math.min(result.scroll_y || 4000, 4000)) });
+    return { scrolled_to_top: true, url: result.url };
+  }
+  return result;
 }
 
 
@@ -453,7 +447,7 @@ async function enterXComposer(tabId, strategy) {
 
   if (strategy === "home_top") {
     if (!/^\/home\/?$/.test(url.pathname)) {
-      await chrome.tabs.update(tabId, { url: "https://x.com/home" });
+      await performHumanInput({ action: "navigate", url: "https://x.com/home" });
       await waitForXPath(tabId, "/home", 12000);
     }
     await executeInPage("scroll_home_top", {}, tabId);
@@ -489,13 +483,40 @@ async function executePostXTweet(params = {}, fixedTabId = null) {
     throw new Error("COMPOSER_ENTRY_FAILED: 三种发帖入口均未能找到编辑框。 " + detail);
   }
 
-  // Never fall back after clicking submit: X may have accepted the post even
-  // when its confirmation toast is delayed or unavailable.
-  const result = await executeInPage("post_x_tweet", params, tab.id);
+  const content = String(params.text ?? "").trim();
+  if (!content) throw new Error("INVALID_CONTENT: 发帖内容不能为空");
+  const pageState = await executeInPage("get_dom_text", { max_chars: 16000 }, tab.id);
+  if (/rate limit exceeded|too many requests|try again later|请求过于频繁|操作过于频繁|暂时限制了部分功能/i.test(pageState?.text || "")) {
+    throw new Error("RATE_LIMITED: 检测到 X 限流提示，未提交发帖");
+  }
+  if (/确认你的身份|验证你是人类|verify you are human|account access|账号访问受限|暂时锁定/i.test(pageState?.text || "")) {
+    throw new Error("CHALLENGE_DETECTED: 页面出现安全验证或账号访问限制，未提交发帖");
+  }
+
+  const editor = await executeInPage("get_x_composer_rect", {}, tab.id);
+  await performHumanInput({
+    action: "type_text",
+    x: editor.viewport_x + editor.width / 2,
+    y: editor.viewport_y + editor.height / 2,
+    text: content,
+    clear_first: true
+  });
+  const verified = await executeInPage("verify_x_composer_text", { text: content }, tab.id);
+  if (!verified?.matches) throw new Error("CONTENT_VERIFY_FAILED: 发帖内容输入后校验不一致，未点击提交");
+
+  const submit = await executeInPage("get_x_submit_button_rect", {}, tab.id);
+  // Submit exactly once. Never retry or switch entry after this OS-level click.
+  await performHumanInput({
+    action: "click",
+    x: submit.viewport_x + submit.width / 2,
+    y: submit.viewport_y + submit.height / 2
+  });
+  const result = await executeInPage("wait_x_post_confirmation", params, tab.id);
   return {
     ...result,
     entry_strategy: selectedStrategy,
-    attempted_strategies: [...attempts.map((item) => item.strategy), selectedStrategy]
+    attempted_strategies: [...attempts.map((item) => item.strategy), selectedStrategy],
+    input_mode: "windows_sendinput"
   };
 }
 
@@ -672,14 +693,14 @@ function connectNative() {
   return nativePort;
 }
 
-function nativeRequest(command, params = {}) {
+function nativeRequest(command, params = {}, timeoutMs = 5000) {
   const port = connectNative();
   const id = crypto.randomUUID();
   return new Promise((resolve, reject) => {
     const timeout = setTimeout(() => {
       pending.delete(id);
       reject(new Error("Native Host request timed out"));
-    }, 5000);
+    }, timeoutMs);
     pending.set(id, {
       resolve: (value) => { clearTimeout(timeout); resolve(value); },
       reject: (error) => { clearTimeout(timeout); reject(error); }
