@@ -2,41 +2,6 @@ const NATIVE_HOST = "com.zhyyay.browser_assistant";
 let nativePort = null;
 const pending = new Map();
 
-function connectNative() {
-  if (nativePort) return nativePort;
-  nativePort = chrome.runtime.connectNative(NATIVE_HOST);
-  nativePort.onMessage.addListener((message) => {
-    const waiter = pending.get(message.id);
-    if (waiter) {
-      pending.delete(message.id);
-      waiter.resolve(message);
-    }
-  });
-  nativePort.onDisconnect.addListener(() => {
-    const error = chrome.runtime.lastError?.message || "Native Host disconnected";
-    for (const waiter of pending.values()) waiter.reject(new Error(error));
-    pending.clear();
-    nativePort = null;
-  });
-  return nativePort;
-}
-
-function nativeRequest(command, params = {}) {
-  const port = connectNative();
-  const id = crypto.randomUUID();
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      pending.delete(id);
-      reject(new Error("Native Host request timed out"));
-    }, 5000);
-    pending.set(id, {
-      resolve: (value) => { clearTimeout(timeout); resolve(value); },
-      reject: (error) => { clearTimeout(timeout); reject(error); }
-    });
-    port.postMessage({ id, command, params });
-  });
-}
-
 async function getActiveTab() {
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (!tab?.id || !tab.url || !/^https?:/.test(tab.url)) {
@@ -55,15 +20,11 @@ async function executeInPage(command, params = {}) {
       const rectOf = (element) => {
         const rect = element.getBoundingClientRect();
         return {
-          x: rect.left + window.scrollX,
-          y: rect.top + window.scrollY,
-          viewport_x: rect.left,
-          viewport_y: rect.top,
-          width: rect.width,
-          height: rect.height
+          x: rect.left + window.scrollX, y: rect.top + window.scrollY,
+          viewport_x: rect.left, viewport_y: rect.top,
+          width: rect.width, height: rect.height
         };
       };
-
       switch (command) {
         case "get_page_info":
           return { url: location.href, title: document.title, ready_state: document.readyState };
@@ -77,8 +38,7 @@ async function executeInPage(command, params = {}) {
           return [...document.querySelectorAll(selector)].slice(0, limit).map((element) => ({
             tag_name: element.tagName.toLowerCase(),
             text: compact(element.innerText || element.getAttribute("aria-label") || element.getAttribute("placeholder"), 300),
-            selector,
-            ...rectOf(element)
+            selector, ...rectOf(element)
           }));
         }
         case "get_element_rect": {
@@ -111,7 +71,7 @@ async function executeInPage(command, params = {}) {
           return { typed: true };
         }
         case "scroll":
-          window.scrollBy({ top: Number(params.delta_y) || 0, behavior: "instant" });
+          window.scrollBy({ top: Number(params.delta_y) || 0, behavior: "auto" });
           return { scroll_y: window.scrollY };
         default:
           throw new Error("unsupported page command: " + command);
@@ -119,6 +79,59 @@ async function executeInPage(command, params = {}) {
     }
   });
   return injection?.result ?? null;
+}
+
+function handleNativeMessage(message) {
+  if (message.type === "desktop_command" && message.id) {
+    (async () => {
+      try {
+        const allowed = new Set([
+          "get_page_info", "get_dom_text", "find_elements",
+          "get_element_rect", "click", "type_text", "scroll"
+        ]);
+        if (!allowed.has(message.command)) throw new Error("unsupported desktop command: " + message.command);
+        const result = await executeInPage(message.command, message.params || {});
+        nativePort?.postMessage({ id: message.id, ok: true, result });
+      } catch (error) {
+        nativePort?.postMessage({ id: message.id, ok: false, error: error.message || String(error) });
+      }
+    })();
+    return;
+  }
+  const waiter = pending.get(message.id);
+  if (waiter) {
+    pending.delete(message.id);
+    waiter.resolve(message);
+  }
+}
+
+function connectNative() {
+  if (nativePort) return nativePort;
+  nativePort = chrome.runtime.connectNative(NATIVE_HOST);
+  nativePort.onMessage.addListener(handleNativeMessage);
+  nativePort.onDisconnect.addListener(() => {
+    const error = chrome.runtime.lastError?.message || "Native Host disconnected";
+    for (const waiter of pending.values()) waiter.reject(new Error(error));
+    pending.clear();
+    nativePort = null;
+  });
+  return nativePort;
+}
+
+function nativeRequest(command, params = {}) {
+  const port = connectNative();
+  const id = crypto.randomUUID();
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      pending.delete(id);
+      reject(new Error("Native Host request timed out"));
+    }, 5000);
+    pending.set(id, {
+      resolve: (value) => { clearTimeout(timeout); resolve(value); },
+      reject: (error) => { clearTimeout(timeout); reject(error); }
+    });
+    port.postMessage({ id, command, params });
+  });
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
