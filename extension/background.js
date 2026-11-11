@@ -10,8 +10,8 @@ async function getActiveTab() {
   return tab;
 }
 
-async function executeInPage(command, params = {}) {
-  const tab = await getActiveTab();
+async function executeInPage(command, params = {}, fixedTabId = null) {
+  const tab = fixedTabId === null ? await getActiveTab() : await chrome.tabs.get(fixedTabId);
   const [injection] = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
     args: [{ command, params }],
@@ -209,6 +209,77 @@ async function executeInPage(command, params = {}) {
   return injection?.result ?? null;
 }
 
+async function scanNotFollowingBack() {
+  const tab = await getActiveTab();
+  const authorization = await nativeRequest("authorize_command", { action: "get_following" });
+  if (!authorization?.ok || !authorization.result?.authorized) {
+    throw new Error(authorization?.error || "Rust Host rejected the Following scan");
+  }
+
+  const users = new Map();
+  let page = null;
+  let rounds = 0;
+  let consecutiveEmpty = 0;
+  let scanComplete = false;
+  let stopReason = "unknown";
+
+  while (rounds < 100) {
+    const batch = await executeInPage("get_following", { limit: 30 }, tab.id);
+    if (!batch?.success) throw new Error("Following 页面扫描返回了无效结果");
+
+    page = batch.page || page;
+    const before = users.size;
+    for (const [index, user] of (batch.users || []).entries()) {
+      const key = user.username
+        ? "@" + user.username.toLowerCase()
+        : user.profile_url || (user.display_name ? "name:" + user.display_name : "unknown:" + rounds + ":" + index);
+      if (!users.has(key)) users.set(key, user);
+    }
+
+    const added = users.size - before;
+    consecutiveEmpty = added === 0 ? consecutiveEmpty + 1 : 0;
+    rounds += 1;
+
+    if (!batch.scroll?.has_more) {
+      scanComplete = true;
+      stopReason = "reached_bottom";
+      break;
+    }
+    if (consecutiveEmpty >= 5) {
+      stopReason = "no_new_users_after_5_rounds";
+      break;
+    }
+    if (rounds >= 100) {
+      stopReason = "maximum_rounds_reached";
+      break;
+    }
+
+    // Conservative pacing: one DOM batch every 3–5 seconds, plus a longer rest every 8 batches.
+    await new Promise((resolve) => setTimeout(resolve, 3000 + Math.floor(Math.random() * 2001)));
+    if (rounds % 8 === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 20000 + Math.floor(Math.random() * 10001)));
+    }
+  }
+
+  const allUsers = [...users.values()];
+  const notFollowingBack = allUsers.filter((user) => user.follow_status === "not_mutual");
+  const mutualCount = allUsers.filter((user) => user.follow_status === "mutual").length;
+  const unknownCount = allUsers.length - mutualCount - notFollowingBack.length;
+
+  return {
+    success: true,
+    page,
+    scan_complete: scanComplete,
+    stop_reason: stopReason,
+    total: allUsers.length,
+    scanned: allUsers.length,
+    mutual_count: mutualCount,
+    not_following_back_count: notFollowingBack.length,
+    unknown_count: unknownCount,
+    users: notFollowingBack
+  };
+}
+
 function handleNativeMessage(message) {
   if (message.type === "desktop_command" && message.id) {
     (async () => {
@@ -267,6 +338,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     try {
       if (message.type === "native_ping") {
         sendResponse(await nativeRequest("ping"));
+        return;
+      }
+      if (message.type === "scan_not_following_back") {
+        const result = await scanNotFollowingBack();
+        sendResponse({ ok: true, result, authorized_by: "rust-native-host" });
         return;
       }
       if (message.type === "page_command") {
