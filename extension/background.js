@@ -149,7 +149,7 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
               ).replace(/@?[A-Za-z0-9_]{1,15}/g, (value) => value.startsWith("@") ? "" : value).trim() || null;
               users.push({
                 username: username ? username.toLowerCase() : null,
-                display_name: displayName,
+                ...(displayName ? { display_name: displayName } : {}),
                 profile_url: username ? new URL("/" + username, location.origin).href : null,
                 follow_status: username ? (/关注了你|Follows you/i.test(text) ? "mutual" : "not_mutual") : "unknown"
               });
