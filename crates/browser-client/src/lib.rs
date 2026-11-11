@@ -37,6 +37,14 @@ impl BrowserClient {
         Ok(Self { reader: Some(connect_stream()?), token })
     }
 
+    /// Read structured X posts from the currently active X page.
+    ///
+    /// The page parser only returns posts already loaded in the DOM; it does not scroll.
+    /// A missing limit defaults to 20 and the extension clamps it to 1..=100.
+    pub fn get_x_posts(&mut self, limit: Option<usize>) -> Result<BrowserResponse> {
+        self.execute(BrowserCommand::GetXPosts { limit })
+    }
+
     /// Send one command. Each request uses a short-lived local IPC connection.
     /// The client reconnects automatically for subsequent calls.
     pub fn execute(&mut self, command: BrowserCommand) -> Result<BrowserResponse> {
