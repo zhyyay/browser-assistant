@@ -446,7 +446,7 @@ async function enterXComposer(tabId, strategy) {
   }
 
   if (strategy === "compose_url") {
-    await chrome.tabs.update(tabId, { url: "https://x.com/compose/post" });
+    await performHumanInput({ action: "navigate", url: "https://x.com/compose/post" }, tabId);
     await waitForXPath(tabId, "/compose/post", 12000);
     await waitForXComposer(tabId, 12000);
     return;
@@ -454,7 +454,7 @@ async function enterXComposer(tabId, strategy) {
 
   if (strategy === "home_top") {
     if (!/^\/home\/?$/.test(url.pathname)) {
-      await performHumanInput({ action: "navigate", url: "https://x.com/home" });
+      await performHumanInput({ action: "navigate", url: "https://x.com/home" }, tabId);
       await waitForXPath(tabId, "/home", 12000);
     }
     await executeInPage("scroll_home_top", {}, tabId);
