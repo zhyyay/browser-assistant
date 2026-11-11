@@ -359,7 +359,7 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
     let target = result;
     const topOverflow = Math.max(0, -target.viewport_y);
     const bottomOverflow = Math.max(0, target.viewport_y + target.height - target.viewport_height);
-    if (topOverflow > 0 || bottomOverflow > 0) {
+    if (command !== "click_home_link" && (topOverflow > 0 || bottomOverflow > 0)) {
       const deltaY = topOverflow > 0 ? -(topOverflow + 100) : bottomOverflow + 100;
       await performHumanInput({
         action: "scroll",
