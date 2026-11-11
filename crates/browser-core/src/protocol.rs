@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 pub enum BrowserCommand {
     Ping,
     AuthorizeCommand { action: String },
-    GetPageInfo,
+    GetPageInfo,\n    GetXPosts { limit: Option<usize> },
     GetDomText { max_chars: Option<usize> },
     FindElements { selector: String, limit: Option<usize> },
     GetElementRect { selector: String },
