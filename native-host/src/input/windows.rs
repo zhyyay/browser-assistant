@@ -76,12 +76,19 @@ fn ctrl_a_backspace() -> Result<()> {
     ])
 }
 fn type_unicode(text: &str) -> Result<()> {
-    for unit in text.encode_utf16() {
-        send(&[
-            key_input(0, unit, KEY_UNICODE),
-            key_input(0, unit, KEY_UNICODE | KEY_UP)
-        ])?;
-        if unit >= 0x4e00 { thread::sleep(Duration::from_millis(3)); }
+    for (index, character) in text.chars().enumerate() {
+        for unit in character.encode_utf16() {
+            send(&[
+                key_input(0, unit, KEY_UNICODE),
+                key_input(0, unit, KEY_UNICODE | KEY_UP)
+            ])?;
+        }
+        let pause_ms = if "，。！？；：,.!?;:".contains(character) {
+            85
+        } else {
+            18 + ((index * 17) % 35) as u64
+        };
+        thread::sleep(Duration::from_millis(pause_ms));
     }
     Ok(())
 }
