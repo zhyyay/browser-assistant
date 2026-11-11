@@ -226,6 +226,10 @@ impl BrowserClient {
         }
 
         let result = response.result.unwrap_or(Value::Null);
+        if result.get("scan_complete").and_then(Value::as_bool) != Some(true) {
+            let reason = result.get("stop_reason").and_then(Value::as_str).unwrap_or("unknown");
+            anyhow::bail!("X Following 扫描未完整结束（{reason}）；请检查 get_following() 返回的部分结果和 errors 后再决定是否重试");
+        }
         Ok(result.get("users").and_then(Value::as_array).cloned().unwrap_or_default()
             .into_iter()
             .filter(|user| user.get("follow_status").and_then(Value::as_str) == Some("not_mutual"))
