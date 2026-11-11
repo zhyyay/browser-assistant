@@ -96,6 +96,39 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
             posts
           };
         }
+        case "click_home_link": {
+          if (location.hostname !== "x.com") throw new Error("PAGE_CHANGED: 当前不是 X 页面");
+          const visible = (element) => {
+            if (!(element instanceof HTMLElement)) return false;
+            const rect = element.getBoundingClientRect();
+            const style = getComputedStyle(element);
+            return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+          };
+          const homeLink = [...document.querySelectorAll('a[data-testid="AppTabBar_Home_Link"], a[href="/home"], a[href="https://x.com/home"]')]
+            .find(visible);
+          if (!homeLink) throw new Error("HOME_LINK_NOT_FOUND: 未找到 X 主页入口");
+          homeLink.click();
+          return { clicked: true, url: location.href };
+        }
+        case "scroll_home_top": {
+          if (location.hostname !== "x.com" || !/^\\/home\\/?$/.test(location.pathname)) {
+            throw new Error("NOT_HOME_PAGE: 当前不是 x.com/home 页面");
+          }
+          if (document.scrollingElement) document.scrollingElement.scrollTop = 0;
+          window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+          return { scrolled_to_top: true, scroll_y: window.scrollY, url: location.href };
+        }
+        case "has_x_composer": {
+          if (location.hostname !== "x.com") throw new Error("PAGE_CHANGED: 当前不是 X 页面");
+          const editor = [...document.querySelectorAll('[data-testid="tweetTextarea_0"], [role="textbox"][data-testid="tweetTextarea_0"]')]
+            .find((element) => {
+              if (!(element instanceof HTMLElement)) return false;
+              const rect = element.getBoundingClientRect();
+              const style = getComputedStyle(element);
+              return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+            });
+          return { ready: Boolean(editor), url: location.href };
+        }
         case "post_x_tweet": {
           if (location.hostname !== "x.com") {
             throw new Error("PAGE_CHANGED: 自动发帖只允许在 x.com 页面执行");
@@ -357,6 +390,99 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
   return injection?.result ?? null;
 }
 
+
+const POST_ENTRY_STRATEGIES = ["home_click", "compose_url", "home_top"];
+
+function shuffled(values) {
+  const result = [...values];
+  for (let index = result.length - 1; index > 0; index--) {
+    const target = Math.floor(Math.random() * (index + 1));
+    [result[index], result[target]] = [result[target], result[index]];
+  }
+  return result;
+}
+
+async function waitForXComposer(tabId, timeoutMs = 12000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = null;
+  while (Date.now() < deadline) {
+    try {
+      const state = await executeInPage("has_x_composer", {}, tabId);
+      if (state?.ready) return state;
+    } catch (error) {
+      lastError = error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 350));
+  }
+  throw new Error(lastError?.message || "COMPOSER_WAIT_TIMEOUT: 等待 X 发帖编辑框超时");
+}
+
+async function enterXComposer(tabId, strategy) {
+  const tab = await chrome.tabs.get(tabId);
+  const url = new URL(tab.url || "");
+  if (url.hostname !== "x.com") {
+    throw new Error("PAGE_CHANGED: 自动发帖只允许在 x.com 标签页执行");
+  }
+
+  if (strategy === "home_click") {
+    await executeInPage("click_home_link", {}, tabId);
+    await waitForXComposer(tabId, 10000);
+    return;
+  }
+
+  if (strategy === "compose_url") {
+    await chrome.tabs.update(tabId, { url: "https://x.com/compose/post" });
+    await waitForXComposer(tabId, 12000);
+    return;
+  }
+
+  if (strategy === "home_top") {
+    if (!/^\/home\/?$/.test(url.pathname)) {
+      await chrome.tabs.update(tabId, { url: "https://x.com/home" });
+    }
+    await executeInPage("scroll_home_top", {}, tabId);
+    await waitForXComposer(tabId, 10000);
+    return;
+  }
+
+  throw new Error("UNKNOWN_ENTRY_STRATEGY: " + strategy);
+}
+
+async function executePostXTweet(params = {}, fixedTabId = null) {
+  const tab = fixedTabId === null ? await getActiveTab() : await chrome.tabs.get(fixedTabId);
+  const initialUrl = new URL(tab.url || "");
+  if (initialUrl.hostname !== "x.com") {
+    throw new Error("PAGE_CHANGED: 请先在 X 页面登录并打开任意 X 页面");
+  }
+
+  const strategies = shuffled(POST_ENTRY_STRATEGIES);
+  const attempts = [];
+  let selectedStrategy = null;
+  for (const strategy of strategies) {
+    try {
+      await enterXComposer(tab.id, strategy);
+      selectedStrategy = strategy;
+      break;
+    } catch (error) {
+      attempts.push({ strategy, error: String(error?.message || error) });
+    }
+  }
+
+  if (!selectedStrategy) {
+    const detail = attempts.map((item) => item.strategy + ": " + item.error).join(" | ");
+    throw new Error("COMPOSER_ENTRY_FAILED: 三种发帖入口均未能找到编辑框。 " + detail);
+  }
+
+  // Never fall back after clicking submit: X may have accepted the post even
+  // when its confirmation toast is delayed or unavailable.
+  const result = await executeInPage("post_x_tweet", params, tab.id);
+  return {
+    ...result,
+    entry_strategy: selectedStrategy,
+    attempted_strategies: [...attempts.map((item) => item.strategy), selectedStrategy]
+  };
+}
+
 async function scanNotFollowingBack() {
   const tab = await getActiveTab();
   const initialUrl = new URL(tab.url);
@@ -500,7 +626,9 @@ function handleNativeMessage(message) {
           "get_element_rect", "click", "type_text", "scroll"
         ]);
         if (!allowed.has(message.command)) throw new Error("unsupported desktop command: " + message.command);
-        const result = await executeInPage(message.command, message.params || {});
+        const result = message.command === "post_x_tweet"
+          ? await executePostXTweet(message.params || {})
+          : await executeInPage(message.command, message.params || {});
         nativePort?.postMessage({ id: message.id, ok: true, result });
       } catch (error) {
         nativePort?.postMessage({ id: message.id, ok: false, error: error.message || String(error) });
@@ -561,7 +689,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         if (!authorization?.ok || !authorization.result?.authorized) {
           throw new Error(authorization?.error || "Rust Host rejected the command");
         }
-        const result = await executeInPage(message.command, message.params || {});
+        const result = message.command === "post_x_tweet"
+          ? await executePostXTweet(message.params || {})
+          : await executeInPage(message.command, message.params || {});
         sendResponse({ ok: true, result, authorized_by: "rust-native-host" });
         return;
       }
