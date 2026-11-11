@@ -117,3 +117,46 @@ export async function scroll(tabId, deltaY, x = 400, y = 300) {
   });
   return { scrolled: true, delta_y: Number(deltaY) || 0, input_mode: "cdp" };
 }
+
+
+export async function clickAt(tabId, x, y) {
+  await attachTab(tabId);
+  const point = { x: Number(x), y: Number(y) };
+  await chrome.debugger.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
+    type: "mouseMoved", ...point, button: "none"
+  });
+  await chrome.debugger.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
+    type: "mousePressed", ...point, button: "left", clickCount: 1
+  });
+  await chrome.debugger.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
+    type: "mouseReleased", ...point, button: "left", clickCount: 1
+  });
+  return { clicked: true, ...point, input_mode: "cdp" };
+}
+
+export async function typeAt(tabId, x, y, text) {
+  await attachTab(tabId);
+  await clickAt(tabId, x, y);
+  await key(tabId, "keyDown", "a", "KeyA", 65, 2);
+  await key(tabId, "keyUp", "a", "KeyA", 65, 2);
+  await key(tabId, "keyDown", "Backspace", "Backspace", 8);
+  await key(tabId, "keyUp", "Backspace", "Backspace", 8);
+  await chrome.debugger.sendCommand({ tabId }, "Input.insertText", { text: String(text ?? "") });
+  return { typed: true, cleared_first: true, input_mode: "cdp" };
+}
+
+export async function dispatchInput(tabId, params = {}) {
+  switch (params.action) {
+    case "click":
+      return clickAt(tabId, params.x, params.y);
+    case "type_text":
+      return typeAt(tabId, params.x, params.y, params.text);
+    case "scroll":
+      return scroll(tabId, params.delta_y, params.x, params.y);
+    case "navigate":
+      await chrome.tabs.update(tabId, { url: String(params.url || "") });
+      return { navigated: true, input_mode: "chrome_tabs_api" };
+    default:
+      throw new Error("Unsupported CDP input action: " + params.action);
+  }
+}
