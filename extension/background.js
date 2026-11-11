@@ -26,6 +26,76 @@ async function executeInPage(command, params = {}) {
         };
       };
       switch (command) {
+
+        case "get_x_posts": {
+          const limit = Math.min(Math.max(Number(params.limit) || 20, 1), 100);
+          const articles = [...document.querySelectorAll('article[data-testid="tweet"]')].slice(0, limit);
+          const parseMetric = (value) => {
+            const raw = compact(value, 80);
+            if (!raw) return { raw: null, value: null };
+            const match = raw.match(/[\\d,.]+\\s*[万亿千KMB]?/i);
+            if (!match) return { raw, value: null };
+            const token = match[0].replace(/,/g, "").replace(/\\s/g, "");
+            const number = Number.parseFloat(token);
+            const suffix = token.slice(String(number).length).toLowerCase();
+            const multiplier = ({ "万": 10000, "亿": 100000000, "千": 1000, "k": 1000, "m": 1000000, "b": 1000000000 })[suffix] || 1;
+            return { raw, value: Number.isFinite(number) ? Math.round(number * multiplier) : null };
+          };
+          const posts = articles.map((article, index) => {
+            const userName = article.querySelector('[data-testid="User-Name"]');
+            const authorLinks = [...(userName?.querySelectorAll('a[href^="/"]') || [])]
+              .filter((link) => /^\\/[^/]+$/.test(link.getAttribute("href") || ""));
+            const profileLink = authorLinks.find((link) => (link.innerText || "").includes("@")) || authorLinks[0] || null;
+            const username = profileLink
+              ? ((profileLink.innerText || "").match(/@([A-Za-z0-9_]+)/)?.[1] || profileLink.getAttribute("href")?.slice(1) || null)
+              : null;
+            const displayName = userName
+              ? compact([...userName.querySelectorAll("span")].map((node) => node.innerText).find((value) => value && !value.startsWith("@")) || userName.innerText, 120)
+              : null;
+            const time = article.querySelector("time");
+            const statusLink = time?.closest("a[href*='/status/']")
+              || [...article.querySelectorAll('a[href*="/status/"]')].find((link) => /\\/status\\/\\d+/.test(link.getAttribute("href") || ""));
+            const href = statusLink?.getAttribute("href") || null;
+            const postId = href?.match(/\\/status\\/(\\d+)/)?.[1] || null;
+            const metric = (testId) => {
+              const element = article.querySelector('[data-testid="' + testId + '"]');
+              return parseMetric(element?.getAttribute("aria-label") || element?.getAttribute("title") || element?.innerText);
+            };
+            const text = compact([...article.querySelectorAll('[data-testid="tweetText"]')].map((node) => node.innerText).join("\\n"), 10000);
+            const replyButton = article.querySelector('[data-testid="reply"]');
+            const repostButton = article.querySelector('[data-testid="retweet"]');
+            const likeButton = article.querySelector('[data-testid="like"], [data-testid="unlike"]');
+            return {
+              index,
+              id: postId,
+              url: href ? new URL(href, location.origin).href : null,
+              text,
+              author: {
+                display_name: displayName || null,
+                username: username ? "@" + username.replace(/^@/, "") : null,
+                profile_url: username ? new URL("/" + username.replace(/^@/, ""), location.origin).href : null
+              },
+              created_at: time?.getAttribute("datetime") || null,
+              metrics: {
+                replies: metric("reply"),
+                reposts: metric("retweet"),
+                likes: metric("like"),
+                views: metric("views")
+              },
+              actions: {
+                reply_available: Boolean(replyButton),
+                repost_available: Boolean(repostButton),
+                like_available: Boolean(likeButton)
+              }
+            };
+          }).filter((post) => post.text || post.id || post.author.username);
+          return {
+            page: { url: location.href, title: document.title },
+            count: posts.length,
+            requested_limit: limit,
+            posts
+          };
+        }
         case "get_page_info":
           return { url: location.href, title: document.title, ready_state: document.readyState };
         case "get_dom_text": {
@@ -86,7 +156,7 @@ function handleNativeMessage(message) {
     (async () => {
       try {
         const allowed = new Set([
-          "get_page_info", "get_dom_text", "find_elements",
+          "get_page_info", "get_dom_text", "find_elements", "get_x_posts",
           "get_element_rect", "click", "type_text", "scroll"
         ]);
         if (!allowed.has(message.command)) throw new Error("unsupported desktop command: " + message.command);
