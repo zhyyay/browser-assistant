@@ -13,6 +13,7 @@ impl BrowserClient {
     }
 }
 
+
  
  /// Publish a post on the currently active X page.
  ///
@@ -28,3 +29,5 @@ impl BrowserClient {
          text: content.to_owned(),
      })
  }
+
+}
