@@ -48,6 +48,6 @@ Rust 客户端调用 `BrowserClient::get_following()` 获取扫描 JSON；调用
 
 Rust 客户端可调用 `BrowserClient::post_x_tweet(content)` 发布文本推文。Native Messaging 命令为 `post_x_tweet`，参数为 `{"text":"要发布的内容"}`。执行前要求当前活动页面位于 `x.com)，且页面存在可见、可用的 X 发帖编辑框。
 
-执行流程：检查页面与安全验证/限流提示 → 确认编辑框为空（不覆盖已有草稿）→ 写入内容并回读校验 → 查找可用的发帖按钮 → 点击一次 → 等待 X 的发送成功提示。成功响应的 `result.status` 为 `sent`；若按钮已点击但无法确认成功，返回 `confirmation_unknown`（`submitted=true`）。这种不确定状态不得自动重试，以免重复发帖。提交前的错误会返回明确错误码，例如 `PAGE_CHANGED`、`INVALID_CONTENT`、`COMPOSER_NOT_FOUND`、`COMPOSER_NOT_EMPTY`、`CONTENT_VERIFY_FAILED` 或 `SUBMIT_BUTTON_NOT_FOUND`。
+执行流程：每次任务开始时随机打乱三种编辑框入口并依次尝试：①点击 X 侧边栏「主页」；②导航到 `https://x.com/compose/post`；③进入 `https://x.com/home` 并滚动到页面顶部。每种入口都等待目标 URL 和发帖编辑框实际加载后才继续；某个入口失败可尝试下一个。找到编辑框后统一检查页面与安全验证/限流提示 → 确认编辑框为空（不覆盖已有草稿）→ 写入内容并回读校验 → 查找可用的发帖按钮 → 点击一次 → 等待 X 的发送成功提示。提交按钮点击后绝不切换入口或自动重试，以免重复发帖。成功响应还会返回 `entry_strategy` 和 `attempted_strategies`，用于诊断本次采用的入口。成功响应的 `result.status` 为 `sent`；若按钮已点击但无法确认成功，返回 `confirmation_unknown`（`submitted=true`）。这种不确定状态不得自动重试，以免重复发帖。提交前的错误会返回明确错误码，例如 `PAGE_CHANGED`、`INVALID_CONTENT`、`COMPOSER_NOT_FOUND`、`COMPOSER_NOT_EMPTY`、`CONTENT_VERIFY_FAILED` 或 `SUBMIT_BUTTON_NOT_FOUND`。
 
 该接口不读取 Cookie、密码或浏览器登录凭据；由当前 X 页面自身的登录状态完成发帖。调用方应在提交前向用户展示待发布内容并取得明确授权。
