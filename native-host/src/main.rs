@@ -15,12 +15,11 @@ use interprocess::local_socket::{prelude::*, GenericNamespaced, ListenerOptions}
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-mod input;
 
 const MAX_MESSAGE_SIZE: usize = 8 * 1024 * 1024;
 const ALLOWED_ACTIONS: &[&str] = &[
     "get_page_info", "get_dom_text", "find_elements", "get_x_posts", "post_x_tweet", "get_following",
-    "get_element_rect", "click", "type_text", "scroll", "human_input",
+    "get_element_rect", "click", "type_text", "scroll",
 ];
 
 enum HostEvent {
@@ -76,12 +75,6 @@ fn handle_message(message: Value) -> Value {
                 response(id, true, Some(json!({"authorized":true,"action":action})), None)
             } else {
                 response(id, false, None, Some(format!("action is not allowed: {action}")))
-            }
-        }
-        "desktop_input" => {
-            match input::execute(&params) {
-                Ok(result) => response(id, true, Some(result), None),
-                Err(error) => response(id, false, None, Some(format!("{error:#}"))),
             }
         }
         _ => response(id, false, None, Some(format!("unsupported host command: {command}"))),
