@@ -26,8 +26,6 @@ impl BrowserClient {
             text: content.to_owned(),
         })
     }
-}
-
 
     /// Reply to one exact post already parsed from the currently loaded X timeline.
     ///
@@ -48,3 +46,4 @@ impl BrowserClient {
             text: content.to_owned(),
         })
     }
+}
