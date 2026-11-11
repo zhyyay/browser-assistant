@@ -27,6 +27,7 @@ struct Input { kind: u32, data: InputUnion }
 
 #[link(name = "user32")]
 extern "system" {
+    fn SetProcessDPIAware() -> Bool;
     fn GetForegroundWindow() -> Hwnd;
     fn GetWindowRect(hwnd: Hwnd, rect: *mut Rect) -> Bool;
     fn GetCursorPos(point: *mut Point) -> Bool;
@@ -132,6 +133,7 @@ unsafe extern "system" fn collect_render(hwnd: Hwnd, param: Lparam) -> Bool {
     1
 }
 fn chrome_bounds() -> Result<(Rect, Rect)> {
+    unsafe { SetProcessDPIAware(); }
     let top = unsafe { GetForegroundWindow() };
     if top.is_null() { bail!("没有前台浏览器窗口，请先激活 Chrome"); }
     let mut top_rect = Rect { left: 0, top: 0, right: 0, bottom: 0 };
