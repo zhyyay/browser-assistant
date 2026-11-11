@@ -17,6 +17,16 @@
       <p class="hint">会随机选择主页入口、发帖地址或主页顶部入口。点击发布后不会自动重试。</p>
     </section>
     <section>
+      <h2>X 时间线回复测试</h2>
+      <button id="load-x-posts">解析时间线推文</button>
+      <select id="reply-post" disabled>
+        <option value="">请先解析当前时间线</option>
+      </select>
+      <textarea id="reply-text" rows="3" placeholder="输入要回复的内容…"></textarea>
+      <button id="reply-x-post" class="primary-action" disabled>测试回复并提交</button>
+      <p class="hint">先解析当前已加载的推文，再选择目标推文。点击提交前会二次确认；这会真实发送回复，不是模拟测试。</p>
+    </section>
+    <section>
       <h2>当前活动页面</h2>
       <button data-command="get_page_info">读取页面信息</button>
       <button data-command="get_dom_text">读取网页文本</button>
