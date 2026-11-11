@@ -513,8 +513,9 @@ async function executePostXTweet(params = {}, fixedTabId = null) {
     x: editor.viewport_x + editor.width / 2,
     y: editor.viewport_y + editor.height / 2,
     text: content,
-    clear_first: true
-  });
+    clear_first: true,
+    scale: editor.device_pixel_ratio || 1
+  }, tab.id);
   const verified = await executeInPage("verify_x_composer_text", { text: content }, tab.id);
   if (!verified?.matches) throw new Error("CONTENT_VERIFY_FAILED: 发帖内容输入后校验不一致，未点击提交");
 
@@ -523,8 +524,9 @@ async function executePostXTweet(params = {}, fixedTabId = null) {
   await performHumanInput({
     action: "click",
     x: submit.viewport_x + submit.width / 2,
-    y: submit.viewport_y + submit.height / 2
-  });
+    y: submit.viewport_y + submit.height / 2,
+    scale: submit.device_pixel_ratio || 1
+  }, tab.id);
   const result = await executeInPage("wait_x_post_confirmation", params, tab.id);
   return {
     ...result,
