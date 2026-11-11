@@ -79,8 +79,8 @@ fn type_unicode(text: &str) -> Result<()> {
     for (index, character) in text.chars().enumerate() {
         for unit in character.encode_utf16() {
             send(&[
-                key_input(0, unit, KEY_UNICODE),
-                key_input(0, unit, KEY_UNICODE | KEY_UP)
+                key_input(0, *unit, KEY_UNICODE),
+                key_input(0, *unit, KEY_UNICODE | KEY_UP)
             ])?;
         }
         let pause_ms = if "，。！？；：,.!?;:".contains(character) {
