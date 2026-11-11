@@ -177,6 +177,104 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
           if (!button) throw new Error("SUBMIT_BUTTON_NOT_FOUND: 未找到可用的发帖按钮");
           return rectOf(button);
         }
+
+        case "get_x_reply_button_rect": {
+          if (location.hostname !== "x.com") throw new Error("PAGE_CHANGED: 当前不是 X 页面");
+          const postId = String(params.post_id || "");
+          if (!/^\\d{5,30}$/.test(postId)) throw new Error("INVALID_POST_ID: 推文 ID 无效");
+          const visible = (element) => {
+            if (!(element instanceof HTMLElement)) return false;
+            const rect = element.getBoundingClientRect();
+            const style = getComputedStyle(element);
+            return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+          };
+          const article = [...document.querySelectorAll('article[data-testid="tweet"]')].find((item) =>
+            [...item.querySelectorAll('a[href*="/status/"]')].some((link) =>
+              new URL(link.href, location.origin).pathname.match(/\\/status\\/(\\d+)/)?.[1] === postId
+            )
+          );
+          if (!article) throw new Error("POST_NOT_FOUND: 当前已加载的时间线中找不到指定推文，请先重新解析时间线");
+          const button = article.querySelector('[data-testid="reply"]');
+          if (!button || !visible(button) || button.getAttribute("aria-disabled") === "true") {
+            throw new Error("REPLY_BUTTON_NOT_FOUND: 指定推文没有可用的回复按钮");
+          }
+          return { ...rectOf(button), post_id: postId };
+        }
+        case "get_x_reply_editor_rect": {
+          if (location.hostname !== "x.com") throw new Error("PAGE_CHANGED: 当前不是 X 页面");
+          const postId = String(params.post_id || "");
+          const visible = (element) => {
+            if (!(element instanceof HTMLElement)) return false;
+            const rect = element.getBoundingClientRect();
+            const style = getComputedStyle(element);
+            return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+          };
+          const dialog = [...document.querySelectorAll('[role="dialog"]')].find((item) =>
+            visible(item) && [...item.querySelectorAll('a[href*="/status/"]')].some((link) =>
+              new URL(link.href, location.origin).pathname.match(/\\/status\\/(\\d+)/)?.[1] === postId
+            )
+          );
+          if (!dialog) throw new Error("REPLY_DIALOG_NOT_FOUND: 未找到与目标推文对应的回复窗口");
+          const editor = [...dialog.querySelectorAll('[data-testid="tweetTextarea_0"], [role="textbox"][data-testid="tweetTextarea_0"]')].find(visible);
+          if (!editor) throw new Error("REPLY_EDITOR_NOT_FOUND: 回复窗口尚未出现可用编辑框");
+          if (editor.getAttribute("aria-disabled") === "true" || editor.getAttribute("contenteditable") === "false") {
+            throw new Error("REPLY_EDITOR_DISABLED: 回复编辑框当前不可用");
+          }
+          return { ...rectOf(editor), post_id: postId, dialog_found: true };
+        }
+        case "verify_x_reply_text": {
+          const postId = String(params.post_id || "");
+          const dialog = [...document.querySelectorAll('[role="dialog"]')].find((item) =>
+            [...item.querySelectorAll('a[href*="/status/"]')].some((link) =>
+              new URL(link.href, location.origin).pathname.match(/\\/status\\/(\\d+)/)?.[1] === postId
+            )
+          );
+          const editor = dialog?.querySelector('[data-testid="tweetTextarea_0"], [role="textbox"][data-testid="tweetTextarea_0"]');
+          const actual = compact(editor?.innerText || editor?.textContent || "", 10000);
+          const expected = compact(params.text || "", 10000);
+          return { matches: Boolean(editor) && actual === expected, actual, expected, post_id: postId };
+        }
+        case "get_x_reply_submit_button_rect": {
+          const postId = String(params.post_id || "");
+          const visible = (element) => {
+            if (!(element instanceof HTMLElement)) return false;
+            const rect = element.getBoundingClientRect();
+            const style = getComputedStyle(element);
+            return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+          };
+          const dialog = [...document.querySelectorAll('[role="dialog"]')].find((item) =>
+            [...item.querySelectorAll('a[href*="/status/"]')].some((link) =>
+              new URL(link.href, location.origin).pathname.match(/\\/status\\/(\\d+)/)?.[1] === postId
+            )
+          );
+          if (!dialog) throw new Error("REPLY_DIALOG_NOT_FOUND: 回复窗口已关闭或目标推文不匹配");
+          const button = [...dialog.querySelectorAll('[data-testid="tweetButton"], [data-testid="tweetButtonInline"]')]
+            .find((element) => visible(element) && !element.disabled && element.getAttribute("aria-disabled") !== "true");
+          if (!button) throw new Error("REPLY_SUBMIT_BUTTON_NOT_FOUND: 未找到可用的回复提交按钮");
+          return { ...rectOf(button), post_id: postId };
+        }
+        case "wait_x_reply_confirmation": {
+          const timeoutMs = Math.min(Math.max(Number(params.confirm_timeout_ms) || 8000, 3000), 15000);
+          const startedAt = Date.now();
+          const visible = (element) => {
+            if (!(element instanceof HTMLElement)) return false;
+            const rect = element.getBoundingClientRect();
+            const style = getComputedStyle(element);
+            return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+          };
+          while (Date.now() - startedAt < timeoutMs) {
+            const toast = [...document.querySelectorAll('[data-testid="toast"], [role="alert"]')]
+              .filter(visible)
+              .map((node) => compact(node.innerText || node.textContent || "", 500))
+              .find((value) => /回复已发送|你的回复已发送|reply sent|your reply was sent|your reply has been sent|post sent|your post was sent/i.test(value));
+            if (toast) return { status: "sent", submitted: true, confirmed: true, confirmation: toast, post_id: params.post_id };
+            await new Promise((resolve) => setTimeout(resolve, 300));
+          }
+          return {
+            status: "confirmation_unknown", submitted: true, confirmed: false, post_id: params.post_id,
+            message: "已点击回复提交按钮，但未检测到明确的发送成功提示；请检查目标推文回复，勿直接重复提交"
+          };
+        }
         case "wait_x_post_confirmation": {
           const visible = (element) => {
             if (!(element instanceof HTMLElement)) return false;
@@ -560,6 +658,75 @@ async function executePostXTweet(params = {}, fixedTabId = null) {
   };
 }
 
+
+async function executeReplyToXPost(params = {}, fixedTabId = null) {
+  const tab = fixedTabId === null ? await getActiveTab() : await chrome.tabs.get(fixedTabId);
+  const initialUrl = new URL(tab.url || "");
+  if (initialUrl.hostname !== "x.com") {
+    throw new Error("PAGE_CHANGED: 请先打开 X 时间线页面");
+  }
+  const postId = String(params.post_id || "").trim();
+  if (!/^\\d{5,30}$/.test(postId)) throw new Error("INVALID_POST_ID: 必须传入解析推文时返回的数字 ID");
+  const content = String(params.text ?? "").trim();
+  if (!content) throw new Error("INVALID_CONTENT: 回复内容不能为空");
+
+  const pageState = await executeInPage("get_dom_text", { max_chars: 16000 }, tab.id);
+  if (/rate limit exceeded|too many requests|try again later|请求过于频繁|操作过于频繁|暂时限制了部分功能/i.test(pageState?.text || "")) {
+    throw new Error("RATE_LIMITED: 检测到 X 限流提示，未提交回复");
+  }
+  if (/确认你的身份|验证你是人类|verify you are human|account access|账号访问受限|暂时锁定/i.test(pageState?.text || "")) {
+    throw new Error("CHALLENGE_DETECTED: 页面出现安全验证或账号访问限制，未提交回复");
+  }
+
+  // Resolve the exact post by its parsed status ID; never fall back to list index or guessed coordinates.
+  const replyButton = await executeInPage("get_x_reply_button_rect", { post_id: postId }, tab.id);
+  await performCdpInput({
+    action: "click",
+    x: replyButton.viewport_x + replyButton.width / 2,
+    y: replyButton.viewport_y + replyButton.height / 2,
+    clear_first: false
+  }, tab.id);
+
+  let editor = null;
+  let lastError = null;
+  const editorDeadline = Date.now() + 10000;
+  while (Date.now() < editorDeadline) {
+    try {
+      editor = await executeInPage("get_x_reply_editor_rect", { post_id: postId }, tab.id);
+      break;
+    } catch (error) {
+      lastError = error;
+      if (!String(error?.message || error).includes("REPLY_DIALOG_NOT_FOUND") &&
+          !String(error?.message || error).includes("REPLY_EDITOR_NOT_FOUND")) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
+  if (!editor) throw new Error("REPLY_EDITOR_TIMEOUT: 等待目标推文回复窗口超时: " + String(lastError?.message || ""));
+
+  await performCdpInput({
+    action: "type_text",
+    x: editor.viewport_x + editor.width / 2,
+    y: editor.viewport_y + editor.height / 2,
+    text: content,
+    clear_first: true
+  }, tab.id);
+  const verified = await executeInPage("verify_x_reply_text", { post_id: postId, text: content }, tab.id);
+  if (!verified?.matches) throw new Error("REPLY_CONTENT_VERIFY_FAILED: 回复内容输入后校验不一致，未提交");
+
+  const submit = await executeInPage("get_x_reply_submit_button_rect", { post_id: postId }, tab.id);
+  // Submit once only. An uncertain confirmation must never trigger an automatic retry.
+  await performCdpInput({
+    action: "click",
+    x: submit.viewport_x + submit.width / 2,
+    y: submit.viewport_y + submit.height / 2
+  }, tab.id);
+  const result = await executeInPage("wait_x_reply_confirmation", {
+    post_id: postId,
+    confirm_timeout_ms: params.confirm_timeout_ms
+  }, tab.id);
+  return { ...result, input_mode: "chrome_devtools_protocol" };
+}
+
 async function scanNotFollowingBack() {
   const tab = await getActiveTab();
   const initialUrl = new URL(tab.url);
@@ -699,13 +866,15 @@ function handleNativeMessage(message) {
     (async () => {
       try {
         const allowed = new Set([
-          "get_page_info", "get_dom_text", "find_elements", "get_x_posts", "post_x_tweet", "get_following",
+          "get_page_info", "get_dom_text", "find_elements", "get_x_posts", "post_x_tweet", "reply_to_x_post", "get_following",
           "get_element_rect", "click", "type_text", "scroll"
         ]);
         if (!allowed.has(message.command)) throw new Error("unsupported desktop command: " + message.command);
         const result = message.command === "post_x_tweet"
           ? await executePostXTweet(message.params || {})
-          : await executeInPage(message.command, message.params || {});
+          : message.command === "reply_to_x_post"
+            ? await executeReplyToXPost(message.params || {})
+            : await executeInPage(message.command, message.params || {});
         nativePort?.postMessage({ id: message.id, ok: true, result });
       } catch (error) {
         nativePort?.postMessage({ id: message.id, ok: false, error: error.message || String(error) });
