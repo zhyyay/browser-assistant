@@ -69,7 +69,7 @@ println!("{}", response.result.unwrap_or_default());
 ## 生命周期与限制
 
 - 必须先由 Chrome 扩展启动 Native Host；Host 不会自行启动 Chrome。
-- 每个 IPC 连接按顺序处理请求；收到响应后再发送下一条命令。
+- 每条 IPC 连接只处理一条请求；Rust 客户端在每次 execute 后关闭连接，并在下一条命令时自动重连。
 - 单条浏览器命令等待上限 45 秒。
 - 命令作用于 Chrome 最后聚焦窗口的活动 HTTP/HTTPS 标签页。
 - 允许 DOM 读取、元素查找、坐标获取、点击、输入和滚动；Host 与扩展两侧均校验命令白名单。
