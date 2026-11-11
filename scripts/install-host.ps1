@@ -18,7 +18,8 @@ $Manifest = @{
 } | ConvertTo-Json -Depth 4
 
 $ManifestPath = [System.IO.Path]::GetFullPath($ManifestPath)
-Set-Content -Path $ManifestPath -Value $Manifest -Encoding UTF8
+$Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+[System.IO.File]::WriteAllText($ManifestPath, $Manifest, $Utf8NoBom)
 $RegistryPath = "HKCU:\Software\Google\Chrome\NativeMessagingHosts\$HostName"
 New-Item -Path $RegistryPath -Force | Out-Null
 Set-Item -Path $RegistryPath -Value $ManifestPath
