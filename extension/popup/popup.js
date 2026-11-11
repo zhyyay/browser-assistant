@@ -21,6 +21,98 @@ document.querySelectorAll("[data-command]").forEach((button) => {
     void send({ type: "page_command", command: button.dataset.command, params });
   });
 });
+const loadPostsButton = document.querySelector("#load-x-posts");
+const replyPostSelect = document.querySelector("#reply-post");
+const replyText = document.querySelector("#reply-text");
+const replyButton = document.querySelector("#reply-x-post");
+
+loadPostsButton.addEventListener("click", async () => {
+  loadPostsButton.disabled = true;
+  loadPostsButton.textContent = "正在解析…";
+  status.textContent = "正在解析时间线";
+  replyPostSelect.disabled = true;
+  replyButton.disabled = true;
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: "page_command",
+      command: "get_x_posts",
+      params: { limit: 20 }
+    });
+    output.textContent = JSON.stringify(response, null, 2);
+    const posts = response?.ok ? response.result?.posts : null;
+    if (!Array.isArray(posts) || posts.length === 0) {
+      throw new Error(response?.error || "没有解析到已加载的推文");
+    }
+    replyPostSelect.replaceChildren();
+    for (const post of posts) {
+      if (!post.id) continue;
+      const option = document.createElement("option");
+      option.value = post.id;
+      const author = post.author?.username || post.author?.display_name || "未知作者";
+      const preview = (post.text || "").replace(/\\s+/g, " ").slice(0, 48);
+      option.textContent = author + " · " + (preview || "无正文") + " · ID " + post.id;
+      replyPostSelect.append(option);
+    }
+    if (replyPostSelect.options.length === 0) {
+      throw new Error("解析结果中没有可用于回复的推文 ID");
+    }
+    replyPostSelect.disabled = false;
+    replyButton.disabled = false;
+    status.textContent = "已解析 " + replyPostSelect.options.length + " 条推文";
+  } catch (error) {
+    status.textContent = "解析失败";
+    output.textContent = JSON.stringify({ ok: false, error: error.message || String(error) }, null, 2);
+  } finally {
+    loadPostsButton.disabled = false;
+    loadPostsButton.textContent = "重新解析时间线推文";
+  }
+});
+
+replyButton.addEventListener("click", async () => {
+  const postId = replyPostSelect.value;
+  const text = replyText.value.trim();
+  if (!postId) {
+    status.textContent = "请先选择目标推文";
+    return;
+  }
+  if (!text) {
+    status.textContent = "请输入回复内容";
+    replyText.focus();
+    return;
+  }
+  const selected = replyPostSelect.selectedOptions[0]?.textContent || postId;
+  if (!window.confirm("即将向以下推文真实提交回复：\\n" + selected + "\\n\\n回复内容：\\n" + text + "\\n\\n确定提交吗？")) return;
+
+  replyButton.disabled = true;
+  loadPostsButton.disabled = true;
+  replyButton.textContent = "正在回复…";
+  status.textContent = "正在打开回复窗口";
+  output.textContent = "正在定位目标推文、输入并校验回复内容；提交后不会自动重试…";
+  try {
+    const response = await chrome.runtime.sendMessage({
+      type: "page_command",
+      command: "reply_to_x_post",
+      params: { post_id: postId, text }
+    });
+    output.textContent = JSON.stringify(response, null, 2);
+    if (response?.ok && response.result?.status === "sent" && response.result?.confirmed) {
+      status.textContent = "回复成功";
+      replyText.value = "";
+    } else if (response?.ok && response.result?.status === "confirmation_unknown") {
+      status.textContent = "提交结果待确认";
+    } else {
+      status.textContent = "回复失败";
+    }
+  } catch (error) {
+    status.textContent = "回复失败";
+    output.textContent = JSON.stringify({ ok: false, error: error.message || String(error) }, null, 2);
+  } finally {
+    replyButton.disabled = !replyPostSelect.value;
+    loadPostsButton.disabled = false;
+    replyButton.textContent = "测试回复并提交";
+  }
+});
+
 
 const scanButton = document.querySelector("#scan-not-following-back");
 scanButton.addEventListener("click", async () => {
