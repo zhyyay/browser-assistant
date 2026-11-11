@@ -18,7 +18,7 @@
 
 页面操作由扩展发起前，先向 Rust Host 请求 `authorize_command`。Rust Host 校验动作是否在允许列表中，扩展收到授权后才在当前活动标签页执行。这样 Rust Host 参与每次命令的授权与响应。
 
-支持动作：`get_page_info`、`get_dom_text`、`find_elements`、`get_x_posts`、`post_x_tweet`、`get_following`、`get_element_rect`、`click`、`type_text`、`scroll`。
+支持动作：`get_page_info`、`get_dom_text`、`find_elements`、`get_x_posts`、`post_x_tweet`、`get_following`、`get_element_rect`、`click`、`type_text`、`scroll`、`human_input`。
 
 ### X 推文解析
 
@@ -48,6 +48,15 @@ Rust 客户端调用 `BrowserClient::get_following()` 获取扫描 JSON；调用
 
 Rust 客户端可调用 `BrowserClient::post_x_tweet(content)` 发布文本推文。Native Messaging 命令为 `post_x_tweet`，参数为 `{"text":"要发布的内容"}`。执行前要求当前活动页面位于 `x.com)，且页面存在可见、可用的 X 发帖编辑框。
 
-执行流程：每次任务开始时随机打乱三种编辑框入口并依次尝试：①点击 X 侧边栏「主页」；②导航到 `https://x.com/compose/post`；③进入 `https://x.com/home` 并滚动到页面顶部。每种入口都等待目标 URL 和发帖编辑框实际加载后才继续；某个入口失败可尝试下一个。找到编辑框后统一检查页面与安全验证/限流提示 → 确认编辑框为空（不覆盖已有草稿）→ 写入内容并回读校验 → 查找可用的发帖按钮 → 点击一次 → 等待 X 的发送成功提示。提交按钮点击后绝不切换入口或自动重试，以免重复发帖。成功响应还会返回 `entry_strategy` 和 `attempted_strategies`，用于诊断本次采用的入口。成功响应的 `result.status` 为 `sent`；若按钮已点击但无法确认成功，返回 `confirmation_unknown`（`submitted=true`）。这种不确定状态不得自动重试，以免重复发帖。提交前的错误会返回明确错误码，例如 `PAGE_CHANGED`、`INVALID_CONTENT`、`COMPOSER_NOT_FOUND`、`COMPOSER_NOT_EMPTY`、`CONTENT_VERIFY_FAILED` 或 `SUBMIT_BUTTON_NOT_FOUND`。
+执行流程：每次任务开始时随机打乱三种编辑框入口并依次尝试：①使用鼠标移动轨迹点击 X 侧边栏「主页」；②鼠标点击 Chrome 地址栏、全选并键入 `https://x.com/compose/post` 后回车；③进入 `https://x.com/home` 并通过真实鼠标滚轮滚动到页面顶部。每种入口都等待目标 URL 和发帖编辑框实际加载后才继续；某个入口失败可尝试下一个。找到编辑框后统一检查页面与安全验证/限流提示 → 鼠标点击编辑框 → `Ctrl+A` → `Backspace` 清空旧内容 → 通过系统键盘逐字输入新内容 → 从 DOM 回读校验 → 鼠标移动并点击一次发帖按钮 → 等待 X 的发送成功提示。每次输入都会先清空目标输入框，避免重复测试时旧内容残留。提交按钮点击后绝不切换入口或自动重试，以免重复发帖。成功响应还会返回 `entry_strategy` 和 `attempted_strategies`，用于诊断本次采用的入口。成功响应的 `result.status` 为 `sent`；若按钮已点击但无法确认成功，返回 `confirmation_unknown`（`submitted=true`）。这种不确定状态不得自动重试，以免重复发帖。提交前的错误会返回明确错误码，例如 `PAGE_CHANGED`、`INVALID_CONTENT`、`COMPOSER_NOT_FOUND`、`COMPOSER_NOT_EMPTY`、`CONTENT_VERIFY_FAILED` 或 `SUBMIT_BUTTON_NOT_FOUND`。
 
 该接口不读取 Cookie、密码或浏览器登录凭据；由当前 X 页面自身的登录状态完成发帖。调用方应在提交前向用户展示待发布内容并取得明确授权。
+
+
+### Windows 系统级鼠标与键盘输入
+
+Native Host 新增 `native-host/src/input/` 模块。Windows 下使用 Win32 `SetCursorPos` 与 `SendInput` 执行可见鼠标移动、点击、键盘输入和滚轮操作；鼠标移动采用带控制点的平滑贝塞尔曲线，而非瞬间跳转。扩展根据网页元素的视口坐标和设备像素比换算到 Chrome 网页渲染窗口坐标，避免把 DOM 的 CSS 像素直接当作屏幕坐标。
+
+通用 `click` 会移动鼠标后点击；`type_text` 会先点击输入框、全选并删除旧内容，再输入新文本并回读验证；`scroll` 和 Following 列表扫描使用系统鼠标滚轮。自动发帖三种入口均使用系统级输入。输入操作要求目标 Chrome 标签页位于前台；目前系统级输入实现仅支持 Windows，其他平台会明确返回不支持错误。
+
+系统级输入不会读取 Cookie、密码或浏览器凭据。由于操作会真实移动鼠标并向前台窗口发送按键，执行期间请勿移动鼠标或切换到其他窗口；不要在输入框中保留需要保留的草稿，因为输入流程按用户要求会先清空编辑框。
