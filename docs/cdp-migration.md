@@ -6,7 +6,7 @@
   Protocol input events.
 - Added `extension/cdp/session_manager.js` to create/reuse a dedicated,
   non-focused automation window and a tab group named `浏览器助手自动化`.
-- Added the `debugger`, `storage` and `tabGroups` extension permissions.
+- Added the `debugger`, `storage` and `tabGroups` permissions, plus the narrow `https://x.com/*` host permission needed to inspect the owned X tab.
 - Routed the existing extension click, typing, scroll and navigation input bridge
   through CDP / Chrome Tabs API. It no longer calls the Native Host's Windows
   SendInput path for normal page operations.
