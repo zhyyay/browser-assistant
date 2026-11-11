@@ -18,7 +18,7 @@
 
 页面操作由扩展发起前，先向 Rust Host 请求 `authorize_command`。Rust Host 校验动作是否在允许列表中，扩展收到授权后才在当前活动标签页执行。这样 Rust Host 参与每次命令的授权与响应。
 
-支持动作：`get_page_info`、`get_dom_text`、`find_elements`、`get_x_posts`、`post_x_tweet`、`get_following`、`get_element_rect`、`click`、`type_text`、`scroll`。
+支持动作：`get_page_info`、`get_dom_text`、`find_elements`、`get_x_posts`、`post_x_tweet`、`reply_to_x_post`、`get_following`、`get_element_rect`、`click`、`type_text`、`scroll`。
 
 ### X 推文解析
 
@@ -43,6 +43,12 @@ Rust 客户端调用 `BrowserClient::get_following()` 获取扫描 JSON；调用
 - 所有可恢复的停止路径尽量保留已经扫描到的用户。
 
 扫描结果包含 `success`、`page`、`scan_complete`、`stop_reason`、`total`、`scanned`、`mutual_count`、`not_following_back_count`、`unknown_count`、`rounds`、`retry_count`、`users` 和 `errors`。其中 `users` 在完整扫描结果中包含所有识别到的用户；扩展弹窗结果中的 `users` 仅包含未回关用户。若 `scan_complete=false`，必须把结果视为部分结果，不能当作完整 Following 清单。
+
+### X 时间线推文回复
+
+Rust 客户端可调用 `BrowserClient::reply_to_x_post(post_id, text)` 回复当前已加载时间线中的指定推文。先调用 `get_x_posts()` 获取推文列表，再将目标推文的数字 `id` 和回复文本传入。扩展按 `/status/{post_id}` 精确定位对应的 `article[data-testid="tweet"]`，只点击该推文自己的回复按钮；不会用列表序号或猜测坐标替代 ID。打开回复窗口后，还会核对窗口内包含相同推文 ID，再定位编辑框、通过 CDP 输入并回读验证，最后点击一次提交按钮。
+
+响应成功时 `result.status = "sent"`、`confirmed = true`，并包含 X 页面返回的 `confirmation` 文本和 `post_id`。点击提交后若未检测到成功提示，则返回 `confirmation_unknown`、`submitted = true`、`confirmed = false`；调用方不得自动重试，避免重复回复。推文不在当前已加载 DOM、ID 无效、回复按钮不可用、窗口目标不匹配、限流或安全验证时会在提交前报错。该流程不读取 Cookie 或登录凭据，且不绕过 X 的限流或安全验证。
 
 ### X 自动发帖
 
