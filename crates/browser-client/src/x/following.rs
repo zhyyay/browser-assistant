@@ -127,7 +127,6 @@ impl BrowserClient {
                     .and_then(Value::as_str)
                     .map(|name| format!("@{}", name.to_ascii_lowercase()))
                     .or_else(|| user.get("profile_url").and_then(Value::as_str).map(str::to_owned))
-                    .or_else(|| user.get("display_name").and_then(Value::as_str).map(|name| format!("unknown:{name}")))
                     .unwrap_or_else(|| format!("unknown:{rounds}:{index}"));
 
                 match users.get_mut(&key) {
