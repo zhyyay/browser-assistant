@@ -104,6 +104,11 @@ async function executeInPage(command, params = {}) {
             throw new Error("当前页面不是 X 用户 Following 页面；请打开 https://x.com/{用户名}/following 后重试");
           }
 
+          const pageText = compact(document.body?.innerText || "", 12000);
+          if (/rate limit exceeded|too many requests|try again later|请求过于频繁|操作过于频繁|暂时限制了部分功能/i.test(pageText)) {
+            throw new Error("检测到 X 限流提示，已停止 Following 扫描；请稍后手动恢复");
+          }
+
           const cells = [...document.querySelectorAll('[data-testid="UserCell"]')].slice(0, limit);
           const users = cells.map((cell) => {
             const text = compact(cell.innerText || "", 2000);
