@@ -225,7 +225,7 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
         }
         case "get_following": {
           const currentUrl = new URL(location.href);
-          const pageMatch = currentUrl.pathname.match(/^\\/([A-Za-z0-9_]{1,15})\\/following\\/?$/i);
+          const pageMatch = currentUrl.pathname.match(/^\/([A-Za-z0-9_]{1,15})\/following\/?$/i);
           if (currentUrl.hostname !== "x.com" || !pageMatch) {
             throw new Error("PAGE_CHANGED: 当前页面不是 X 用户 Following 页面");
           }
@@ -503,7 +503,7 @@ async function scanNotFollowingBack() {
   const tab = await getActiveTab();
   const initialUrl = new URL(tab.url);
   const followingMatch = initialUrl.hostname === "x.com"
-    ? initialUrl.pathname.match(/^\\/([A-Za-z0-9_]{1,15})\\/following\\/?$/i)
+    ? initialUrl.pathname.match(/^\/([A-Za-z0-9_]{1,15})\/following\/?$/i)
     : null;
   if (!followingMatch) {
     throw new Error("PAGE_CHANGED: 请先打开 https://x.com/{用户名}/following 页面");
