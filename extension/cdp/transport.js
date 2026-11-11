@@ -9,15 +9,7 @@ const attachedTabs = new Set();
 
 export async function attachTab(tabId) {
   if (attachedTabs.has(tabId)) return;
-  try {
-    await chrome.debugger.attach({ tabId }, PROTOCOL_VERSION);
-  } catch (error) {
-    // The tab may already be attached by this extension after a service-worker
-    // restart. Only suppress the explicit already-attached case.
-    if (!/already attached|Another debugger is already attached/i.test(String(error?.message || error))) {
-      throw error;
-    }
-  }
+  await chrome.debugger.attach({ tabId }, PROTOCOL_VERSION);
   attachedTabs.add(tabId);
   await chrome.debugger.sendCommand({ tabId }, "Page.enable");
   await chrome.debugger.sendCommand({ tabId }, "DOM.enable");
@@ -160,3 +152,7 @@ export async function dispatchInput(tabId, params = {}) {
       throw new Error("Unsupported CDP input action: " + params.action);
   }
 }
+
+chrome.debugger.onDetach.addListener((source) => {
+  if (Number.isInteger(source?.tabId)) attachedTabs.delete(source.tabId);
+});
