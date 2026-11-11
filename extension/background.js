@@ -540,7 +540,7 @@ async function executePostXTweet(params = {}, fixedTabId = null) {
   if (!verified?.matches) throw new Error("CONTENT_VERIFY_FAILED: 发帖内容输入后校验不一致，未点击提交");
 
   const submit = await executeInPage("get_x_submit_button_rect", {}, tab.id);
-  // Submit exactly once. Never retry or switch entry after this OS-level click.
+  // Submit exactly once. Never retry or switch entry after this CDP click.
   await performCdpInput({
     action: "click",
     x: submit.viewport_x + submit.width / 2,
