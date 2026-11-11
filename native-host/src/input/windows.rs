@@ -30,6 +30,7 @@ extern "system" {
     fn SetProcessDPIAware() -> Bool;
     fn GetForegroundWindow() -> Hwnd;
     fn GetWindowRect(hwnd: Hwnd, rect: *mut Rect) -> Bool;
+    fn IsWindowVisible(hwnd: Hwnd) -> Bool;
     fn GetCursorPos(point: *mut Point) -> Bool;
     fn SetCursorPos(x: i32, y: i32) -> Bool;
     fn EnumChildWindows(hwnd: Hwnd, callback: Option<unsafe extern "system" fn(Hwnd, Lparam) -> Bool>, param: Lparam) -> Bool;
@@ -122,7 +123,7 @@ fn move_curve(target_x: i32, target_y: i32) -> Result<()> {
 unsafe extern "system" fn collect_render(hwnd: Hwnd, param: Lparam) -> Bool {
     let mut name = [0_u16; 128];
     let len = GetClassNameW(hwnd, name.as_mut_ptr(), name.len() as i32);
-    if len > 0 {
+    if len > 0 && IsWindowVisible(hwnd) != 0 {
         let class = String::from_utf16_lossy(&name[..len as usize]);
         if class == "Chrome_RenderWidgetHostHWND" {
             let found = &mut *(param as *mut Option<Hwnd>);
@@ -197,7 +198,7 @@ pub fn execute(params: &Value) -> Result<Value> {
                 bail!("仅允许输入有效的 HTTP/HTTPS 网址");
             }
             let x = (window.left + window.right) / 2;
-            let y = window.top + 72;
+            let y = window.top + 90;
             click_at(x, y)?;
             thread::sleep(Duration::from_millis(100));
             // Ctrl+L guarantees address-bar focus even when browser toolbar metrics vary.
