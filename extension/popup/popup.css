@@ -9,3 +9,26 @@ button { width: 100%; margin: 4px 0; padding: 9px 10px; border: 1px solid #d8dde
 button:hover { background: #eef3ff; border-color: #9bb7f5; }
 #connect { background: #2458c6; color: white; border-color: #2458c6; text-align: center; }
 pre { max-height: 220px; overflow: auto; padding: 10px; border-radius: 7px; background: #171b22; color: #d6e2f0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }
+
+textarea {
+  display: block;
+  width: 100%;
+  min-height: 88px;
+  margin: 4px 0 6px;
+  padding: 9px 10px;
+  resize: vertical;
+  border: 1px solid #d8dde5;
+  border-radius: 7px;
+  background: white;
+  color: #20242b;
+  font: inherit;
+}
+textarea:focus { outline: 2px solid #9bb7f5; border-color: #2458c6; }
+button.primary-action {
+  background: #2458c6;
+  color: white;
+  border-color: #2458c6;
+  text-align: center;
+}
+button:disabled { opacity: .6; cursor: wait; }
+.hint { margin: 4px 0 8px; color: #687385; font-size: 11px; line-height: 1.45; }
