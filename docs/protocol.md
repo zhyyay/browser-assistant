@@ -79,7 +79,7 @@ do not move the Windows desktop cursor or type into another foreground applicati
 - The owned tab is stored in extension local storage and grouped as
   `浏览器助手自动化`. The user's tabs are not moved or closed.
 
-The extension now requests `debugger`, `storage` and `tabGroups` permissions.
+The extension now requests `debugger`, `storage` and `tabGroups` permissions, plus only the `https://x.com/*` host permission needed for its owned X automation tabs.
 Chrome may show its debugging notification/banner while a target tab is attached.
 This is a Chrome security indicator, not a failure.
 
@@ -87,3 +87,13 @@ Windows SendInput remains in the Native Host as a legacy fallback implementation
 but the extension's normal page input path no longer invokes it. CDP behavior on X,
 especially background-tab composition and scrolling, still requires live testing
 against the user's Chrome version and account.
+
+
+### CDP command boundary
+
+The current CDP transport uses only the `Input` domain:
+`Input.dispatchMouseEvent`, `Input.dispatchKeyEvent`, and `Input.insertText`.
+It does not enable the CDP `Network` or `Runtime` domains and does not issue
+cookie-reading commands. The Chrome `debugger` permission is nevertheless powerful;
+future changes must preserve this narrow command allowlist and must not add cookie,
+credential, localStorage or sessionStorage extraction.
