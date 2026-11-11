@@ -21,3 +21,29 @@ document.querySelectorAll("[data-command]").forEach((button) => {
     void send({ type: "page_command", command: button.dataset.command, params });
   });
 });
+
+const scanButton = document.querySelector("#scan-not-following-back");
+scanButton.addEventListener("click", async () => {
+  scanButton.disabled = true;
+  scanButton.textContent = "扫描中，请保持弹窗打开…";
+  status.textContent = "正在分批扫描";
+  output.textContent = "正在检查 X Following 页面。每批之间会等待，扫描时间取决于关注人数…";
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "scan_not_following_back" });
+    output.textContent = JSON.stringify(response, null, 2);
+    if (response?.ok) {
+      const result = response.result || {};
+      status.textContent = result.scan_complete ? "扫描完成" : "扫描未完成";
+      scanButton.textContent = "重新扫描没有回关的用户";
+    } else {
+      status.textContent = "扫描失败";
+      scanButton.textContent = "重试扫描没有回关的用户";
+    }
+  } catch (error) {
+    status.textContent = "扫描失败";
+    output.textContent = JSON.stringify({ ok: false, error: error.message || String(error) }, null, 2);
+    scanButton.textContent = "重试扫描没有回关的用户";
+  } finally {
+    scanButton.disabled = false;
+  }
+});
