@@ -42,6 +42,16 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
       switch (command) {
 
         case "get_x_posts": {
+          if (location.hostname !== "x.com" || !/^\\/home\\/?$/.test(location.pathname)) {
+            throw new Error("PAGE_CHANGED: 当前页面不是 X 首页时间线");
+          }
+          const bodyText = compact(document.body?.innerText || "", 16000);
+          if (/rate limit exceeded|too many requests|try again later|请求过于频繁|操作过于频繁|暂时限制了部分功能/i.test(bodyText)) {
+            throw new Error("RATE_LIMITED: 检测到 X 限流提示，已停止扫描");
+          }
+          if (/确认你的身份|验证你是人类|verify you are human|account access|账号访问受限|暂时锁定/i.test(bodyText)) {
+            throw new Error("CHALLENGE_DETECTED: 页面出现安全验证或账号访问限制，已停止扫描");
+          }
           const limit = Math.min(Math.max(Number(params.limit) || 20, 1), 100);
           const articles = [...document.querySelectorAll('article[data-testid="tweet"]')].slice(0, limit);
           const parseMetric = (value) => {
