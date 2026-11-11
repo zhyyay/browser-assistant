@@ -43,8 +43,13 @@ impl BrowserClient {
                             "attempt": attempt + 1,
                             "message": message
                         }));
+                        let reason = classify_stop_reason(&message);
+                        if matches!(reason, "rate_limited" | "challenge_detected" | "page_changed") {
+                            stop_reason = reason;
+                            break;
+                        }
                         if attempt == 2 {
-                            stop_reason = classify_stop_reason(&message);
+                            stop_reason = reason;
                         }
                     }
                     Err(error) => {
@@ -55,8 +60,13 @@ impl BrowserClient {
                             "attempt": attempt + 1,
                             "message": message
                         }));
+                        let reason = classify_stop_reason(&message);
+                        if matches!(reason, "rate_limited" | "challenge_detected" | "page_changed") {
+                            stop_reason = reason;
+                            break;
+                        }
                         if attempt == 2 {
-                            stop_reason = classify_stop_reason(&message);
+                            stop_reason = reason;
                         }
                     }
                 }
