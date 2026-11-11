@@ -1,3 +1,6 @@
+import { dispatchInput } from "./cdp/transport.js";
+import { ensureAutomationTab } from "./cdp/session_manager.js";
+
 const NATIVE_HOST = "com.zhyyay.browser_assistant";
 let nativePort = null;
 const pending = new Map();
@@ -10,20 +13,9 @@ async function getActiveTab() {
   return tab;
 }
 
-async function performHumanInput(params, tabId = null) {
-  if (tabId !== null) {
-    const targetTab = await chrome.tabs.get(tabId);
-    await chrome.windows.update(targetTab.windowId, { focused: true });
-    await chrome.tabs.update(tabId, { active: true });
-    await new Promise((resolve) => setTimeout(resolve, 180));
-  }
-  const authorization = await nativeRequest("authorize_command", { action: "human_input" });
-  if (!authorization?.ok || !authorization.result?.authorized) {
-    throw new Error(authorization?.error || "Rust Host rejected human input");
-  }
-  const response = await nativeRequest("desktop_input", params, 30000);
-  if (!response?.ok) throw new Error(response?.error || "系统级鼠标/键盘操作失败");
-  return response.result;
+async function performCdpInput(params, tabId) {
+  if (!Number.isInteger(tabId)) throw new Error("CDP_TAB_REQUIRED: 必须指定自动化目标标签页");
+  return dispatchInput(tabId, params);
 }
 
 async function executeInPage(command, params = {}, fixedTabId = null) {
@@ -361,7 +353,7 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
     const bottomOverflow = Math.max(0, target.viewport_y + target.height - target.viewport_height);
     if (command !== "click_home_link" && (topOverflow > 0 || bottomOverflow > 0)) {
       const deltaY = topOverflow > 0 ? -(topOverflow + 100) : bottomOverflow + 100;
-      await performHumanInput({
+      await performCdpInput({
         action: "scroll",
         x: Math.floor(target.viewport_width / 2),
         y: Math.floor(target.viewport_height / 2),
@@ -374,10 +366,10 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
     if (command !== "type_text") {
       const x = target.viewport_x + target.width / 2;
       const y = target.viewport_y + target.height / 2;
-      await performHumanInput({ action: "click", x, y, scale: target.device_pixel_ratio || 1 }, tab.id);
+      await performCdpInput({ action: "click", x, y, scale: target.device_pixel_ratio || 1 }, tab.id);
       return { clicked: true, url: result.url || tab.url };
     }
-    await performHumanInput({
+    await performCdpInput({
       action: "type_text",
       x: target.viewport_x + target.width / 2,
       y: target.viewport_y + target.height / 2,
@@ -390,13 +382,13 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
     return { typed: true, cleared_first: true, verified: true };
   }
   if (command === "scroll") {
-    await performHumanInput({ action: "scroll", x: result.x, y: result.y, delta_y: result.delta_y, scale: result.device_pixel_ratio || 1 }, tab.id);
+    await performCdpInput({ action: "scroll", x: result.x, y: result.y, delta_y: result.delta_y, scale: result.device_pixel_ratio || 1 }, tab.id);
     return { scrolled: true, delta_y: result.delta_y };
   }
   if (command === "scroll_home_top") {
     let scrollY = result.scroll_y || 0;
     for (let attempt = 0; attempt < 10 && scrollY > 3; attempt++) {
-      await performHumanInput({
+      await performCdpInput({
         action: "scroll", x: result.x, y: result.y, delta_y: -4000,
         scale: result.device_pixel_ratio || 1
       }, tab.id);
@@ -407,7 +399,7 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
     return { scrolled_to_top: scrollY <= 3, scroll_y: scrollY, url: result.url };
   }
   if (command === "get_following") {
-    await performHumanInput({
+    await performCdpInput({
       action: "scroll", x: result.scroll.x, y: result.scroll.y,
       delta_y: result.scroll.delta_y, scale: result.scroll.device_pixel_ratio || 1
     }, tab.id);
@@ -481,7 +473,7 @@ async function enterXComposer(tabId, strategy) {
   }
 
   if (strategy === "compose_url") {
-    await performHumanInput({ action: "navigate", url: "https://x.com/compose/post" }, tabId);
+    await performCdpInput({ action: "navigate", url: "https://x.com/compose/post" }, tabId);
     await waitForXPath(tabId, "/compose/post", 12000);
     await waitForXComposer(tabId, 12000);
     return;
@@ -489,7 +481,7 @@ async function enterXComposer(tabId, strategy) {
 
   if (strategy === "home_top") {
     if (!/^\/home\/?$/.test(url.pathname)) {
-      await performHumanInput({ action: "navigate", url: "https://x.com/home" }, tabId);
+      await performCdpInput({ action: "navigate", url: "https://x.com/home" }, tabId);
       await waitForXPath(tabId, "/home", 12000);
     }
     await executeInPage("scroll_home_top", {}, tabId);
@@ -501,7 +493,7 @@ async function enterXComposer(tabId, strategy) {
 }
 
 async function executePostXTweet(params = {}, fixedTabId = null) {
-  const tab = fixedTabId === null ? await getActiveTab() : await chrome.tabs.get(fixedTabId);
+  const tab = fixedTabId === null ? (await ensureAutomationTab("https://x.com/home")).tab : await chrome.tabs.get(fixedTabId);
   const initialUrl = new URL(tab.url || "");
   if (initialUrl.hostname !== "x.com") {
     throw new Error("PAGE_CHANGED: 请先在 X 页面登录并打开任意 X 页面");
@@ -536,7 +528,7 @@ async function executePostXTweet(params = {}, fixedTabId = null) {
   }
 
   const editor = await executeInPage("get_x_composer_rect", {}, tab.id);
-  await performHumanInput({
+  await performCdpInput({
     action: "type_text",
     x: editor.viewport_x + editor.width / 2,
     y: editor.viewport_y + editor.height / 2,
@@ -549,7 +541,7 @@ async function executePostXTweet(params = {}, fixedTabId = null) {
 
   const submit = await executeInPage("get_x_submit_button_rect", {}, tab.id);
   // Submit exactly once. Never retry or switch entry after this OS-level click.
-  await performHumanInput({
+  await performCdpInput({
     action: "click",
     x: submit.viewport_x + submit.width / 2,
     y: submit.viewport_y + submit.height / 2,
@@ -560,13 +552,15 @@ async function executePostXTweet(params = {}, fixedTabId = null) {
     ...result,
     entry_strategy: selectedStrategy,
     attempted_strategies: [...attempts.map((item) => item.strategy), selectedStrategy],
-    input_mode: "windows_sendinput"
+    input_mode: "cdp"
   };
 }
 
 async function scanNotFollowingBack() {
-  const tab = await getActiveTab();
-  const initialUrl = new URL(tab.url);
+  const sourceTab = await getActiveTab();
+  const initialUrl = new URL(sourceTab.url);
+  const ownedSession = await ensureAutomationTab(sourceTab.url);
+  const tab = ownedSession.tab;
   const followingMatch = initialUrl.hostname === "x.com"
     ? initialUrl.pathname.match(/^\/([A-Za-z0-9_]{1,15})\/following\/?$/i)
     : null;
