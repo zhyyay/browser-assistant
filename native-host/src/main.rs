@@ -17,7 +17,7 @@ use uuid::Uuid;
 
 const MAX_MESSAGE_SIZE: usize = 8 * 1024 * 1024;
 const ALLOWED_ACTIONS: &[&str] = &[
-    "get_page_info", "get_dom_text", "find_elements", "get_x_posts", "get_following",
+    "get_page_info", "get_dom_text", "find_elements", "get_x_posts", "post_x_tweet", "get_following",
     "get_element_rect", "click", "type_text", "scroll",
 ];
 
@@ -186,6 +186,7 @@ fn page_action_name(command: &BrowserCommand) -> Option<&'static str> {
     match command {
         BrowserCommand::GetPageInfo => Some("get_page_info"),
         BrowserCommand::GetXPosts { .. } => Some("get_x_posts"),
+        BrowserCommand::PostXTweet { .. } => Some("post_x_tweet"),
         BrowserCommand::GetFollowing { .. } => Some("get_following"),
         BrowserCommand::GetDomText { .. } => Some("get_dom_text"),
         BrowserCommand::FindElements { .. } => Some("find_elements"),
