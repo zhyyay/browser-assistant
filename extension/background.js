@@ -111,7 +111,7 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
           return { clicked: true, url: location.href };
         }
         case "scroll_home_top": {
-          if (location.hostname !== "x.com" || !/^\\/home\\/?$/.test(location.pathname)) {
+          if (location.hostname !== "x.com" || !/^\/home\/?$/.test(location.pathname)) {
             throw new Error("NOT_HOME_PAGE: 当前不是 x.com/home 页面");
           }
           if (document.scrollingElement) document.scrollingElement.scrollTop = 0;
@@ -423,7 +423,7 @@ async function waitForXPath(tabId, expectedPath, timeoutMs = 12000) {
     const tab = await chrome.tabs.get(tabId);
     try {
       const url = new URL(tab.url || "");
-      if (url.hostname === "x.com" && url.pathname.replace(/\\/$/, "") === expectedPath) return url.href;
+      if (url.hostname === "x.com" && url.pathname.replace(/\/$/, "") === expectedPath) return url.href;
     } catch (_) {}
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
