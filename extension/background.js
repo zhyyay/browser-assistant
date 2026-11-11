@@ -96,6 +96,59 @@ async function executeInPage(command, params = {}) {
             posts
           };
         }
+        case "get_following": {
+          const limit = Math.min(Math.max(Number(params.limit) || 30, 1), 50);
+          const currentUrl = new URL(location.href);
+          const pageMatch = currentUrl.pathname.match(/^\/([A-Za-z0-9_]{1,15})\/following\/?$/i);
+          if (currentUrl.hostname !== "x.com" || !pageMatch) {
+            throw new Error("当前页面不是 X 用户 Following 页面；请打开 https://x.com/{用户名}/following 后重试");
+          }
+
+          const cells = [...document.querySelectorAll('[data-testid="UserCell"]')].slice(0, limit);
+          const users = cells.map((cell) => {
+            const text = compact(cell.innerText || "", 2000);
+            const profileLink = [...cell.querySelectorAll('a[href^="/"]')]
+              .find((link) => /^\/[A-Za-z0-9_]{1,15}\/?$/.test(link.getAttribute("href") || ""));
+            const href = profileLink?.getAttribute("href") || null;
+            const username = href ? href.replace(/^\//, "").replace(/\/$/, "") : null;
+            const displayName = compact(
+              [...(profileLink?.querySelectorAll("span") || [])]
+                .map((node) => node.innerText)
+                .find((value) => value && !value.trim().startsWith("@")) || profileLink?.innerText || "",
+              120
+            ).replace(/@?[A-Za-z0-9_]{1,15}/g, (value) => value.startsWith("@") ? "" : value).trim() || null;
+            const followsYou = /关注了你|Follows you/i.test(text);
+            return {
+              username: username ? username.toLowerCase() : null,
+              display_name: displayName,
+              profile_url: username ? new URL("/" + username, location.origin).href : null,
+              follow_status: username ? (followsYou ? "mutual" : "not_mutual") : "unknown"
+            };
+          });
+
+          let scroller = document.scrollingElement || document.documentElement;
+          const firstCell = cells[0];
+          for (let element = firstCell?.parentElement; element && element !== document.body; element = element.parentElement) {
+            const style = getComputedStyle(element);
+            if (/(auto|scroll)/.test(style.overflowY) && element.scrollHeight > element.clientHeight + 80) {
+              scroller = element;
+              break;
+            }
+          }
+          const beforeTop = scroller.scrollTop;
+          const clientHeight = scroller.clientHeight || window.innerHeight;
+          const scrollHeight = scroller.scrollHeight || document.documentElement.scrollHeight;
+          scroller.scrollBy({ top: Math.max(300, Math.floor(clientHeight * 0.85)), behavior: "auto" });
+          const scrollTop = scroller.scrollTop;
+          const hasMore = scrollTop + clientHeight < scrollHeight - 20;
+          return {
+            success: true,
+            page: { url: location.href, username: pageMatch[1], type: "following" },
+            batch_count: users.length,
+            users,
+            scroll: { before_top: beforeTop, top: scrollTop, height: scrollHeight, viewport_height: clientHeight, has_more: hasMore }
+          };
+        }
         case "get_page_info":
           return { url: location.href, title: document.title, ready_state: document.readyState };
         case "get_dom_text": {
@@ -156,7 +209,7 @@ function handleNativeMessage(message) {
     (async () => {
       try {
         const allowed = new Set([
-          "get_page_info", "get_dom_text", "find_elements", "get_x_posts",
+          "get_page_info", "get_dom_text", "find_elements", "get_x_posts", "get_following",
           "get_element_rect", "click", "type_text", "scroll"
         ]);
         if (!allowed.has(message.command)) throw new Error("unsupported desktop command: " + message.command);
