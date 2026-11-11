@@ -48,7 +48,7 @@ Rust 客户端调用 `BrowserClient::get_following()` 获取扫描 JSON；调用
 
 Rust 客户端可调用 `BrowserClient::post_x_tweet(content)` 发布文本推文。Native Messaging 命令为 `post_x_tweet`，参数为 `{"text":"要发布的内容"}`。执行前要求当前活动页面位于 `x.com)，且页面存在可见、可用的 X 发帖编辑框。
 
-执行流程：每次任务开始时随机打乱三种编辑框入口并依次尝试：①通过 CDP 向 X 侧边栏「主页」派发鼠标事件；②通过 Chrome 标签页导航 API 打开 `https://x.com/compose/post`；③进入 `https://x.com/home` 并通过 CDP 滚轮事件滚动到页面顶部。每种入口都等待目标 URL 和发帖编辑框实际加载后才继续；某个入口失败可尝试下一个。找到编辑框后统一检查页面与安全验证/限流提示 → 鼠标点击编辑框 → `Ctrl+A` → `Backspace` 清空旧内容 → 通过系统键盘逐字输入新内容 → 从 DOM 回读校验 → 通过 CDP 鼠标事件点击一次发帖按钮 → 等待 X 的发送成功提示。每次输入都会先清空目标输入框，避免重复测试时旧内容残留。提交按钮点击后绝不切换入口或自动重试，以免重复发帖。成功响应还会返回 `entry_strategy` 和 `attempted_strategies`，用于诊断本次采用的入口。成功响应的 `result.status` 为 `sent`；若按钮已点击但无法确认成功，返回 `confirmation_unknown`（`submitted=true`）。这种不确定状态不得自动重试，以免重复发帖。提交前的错误会返回明确错误码，例如 `PAGE_CHANGED`、`INVALID_CONTENT`、`COMPOSER_NOT_FOUND`、`COMPOSER_NOT_EMPTY`、`CONTENT_VERIFY_FAILED` 或 `SUBMIT_BUTTON_NOT_FOUND`。
+执行流程：每次任务开始时随机打乱三种编辑框入口并依次尝试：①通过 CDP 向 X 侧边栏「主页」派发鼠标事件；②通过 Chrome 标签页导航 API 打开 `https://x.com/compose/post`；③进入 `https://x.com/home` 并通过 CDP 滚轮事件滚动到页面顶部。每种入口都等待目标 URL 和发帖编辑框实际加载后才继续；某个入口失败可尝试下一个。找到编辑框后统一检查页面与安全验证/限流提示 → 鼠标点击编辑框 → `Ctrl+A` → `Backspace` 清空旧内容 → 通过 CDP 的 Input.insertText 输入新内容 → 从 DOM 回读校验 → 通过 CDP 鼠标事件点击一次发帖按钮 → 等待 X 的发送成功提示。每次输入都会先清空目标输入框，避免重复测试时旧内容残留。提交按钮点击后绝不切换入口或自动重试，以免重复发帖。成功响应还会返回 `entry_strategy` 和 `attempted_strategies`，用于诊断本次采用的入口。成功响应的 `result.status` 为 `sent`；若按钮已点击但无法确认成功，返回 `confirmation_unknown`（`submitted=true`）。这种不确定状态不得自动重试，以免重复发帖。提交前的错误会返回明确错误码，例如 `PAGE_CHANGED`、`INVALID_CONTENT`、`COMPOSER_NOT_FOUND`、`COMPOSER_NOT_EMPTY`、`CONTENT_VERIFY_FAILED` 或 `SUBMIT_BUTTON_NOT_FOUND`。
 
 该接口不读取 Cookie、密码或浏览器登录凭据；由当前 X 页面自身的登录状态完成发帖。调用方应在提交前向用户展示待发布内容并取得明确授权。
 
@@ -57,7 +57,7 @@ Rust 客户端可调用 `BrowserClient::post_x_tweet(content)` 发布文本推�
 
 网页点击、文本输入和滚动统一由 Chrome 扩展通过 `chrome.debugger` 调用 Chrome DevTools Protocol（CDP）的 `Input.dispatchMouseEvent`、`Input.dispatchKeyEvent`、`Input.insertText` 执行。操作坐标使用网页视口 CSS 像素，不换算 Windows 屏幕坐标，也不激活目标窗口、不移动 Windows 全局鼠标或键盘。导航使用 `chrome.tabs.update`，DOM 读取和操作前的目标定位仍由扩展脚本完成。
 
-扩展需要新增 Chrome `debugger` 权限。首次附加调试器时，Chrome 可能显示“扩展程序正在调试此浏览器”提示；调试器被 DevTools 或其他扩展占用时，CDP 操作会明确失败，不会回退到系统级输入。CDP 连接按标签页复用，标签页关闭或调试器分离后清理状态。
+扩展需要新增 Chrome `debugger` 权限。首次附加调试器时，Chrome 可能显示“扩展程序正在调试此浏览器”提示；调试器被 DevTools 或其他扩展占用时，CDP 操作会明确失败，不会回退到系统级输入。CDP 连接按标签页复用；每个标签页的点击、输入和滚动序列会串行执行，避免并发 Rust 请求交叉发送鼠标/键盘事件。Service Worker 重启后，会先通过 chrome.debugger.getTargets() 检查目标，再用 Browser.getVersion 探测已有会话；只有确认当前扩展可继续使用该会话时才复用，否则明确报错，不会把其他扩展或 DevTools 的连接误当作自己的连接。标签页关闭或调试器分离后清理状态。
 
 Native Host 不再提供 `desktop_input`，Windows `SendInput` 模块从正常编译和调用链移除。当前改造不读取 Cookie、密码或浏览器登录凭据。后台标签页是否能完成具体交互仍取决于网页自身行为；CDP 不等于完全隐身或绕过网站风控。
 
