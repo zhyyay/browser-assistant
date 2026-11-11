@@ -303,6 +303,8 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
           const viewportHeight = scroller.clientHeight || window.innerHeight;
           return { top, height, viewport_height: viewportHeight, has_more: top + viewportHeight < height - 30 };
         }
+        case "get_page_scroll":
+          return { scroll_y: window.scrollY, x: Math.floor(window.innerWidth / 2), y: Math.floor(window.innerHeight / 2), device_pixel_ratio: window.devicePixelRatio || 1 };
         case "get_page_info":
           return { url: location.href, title: document.title, ready_state: document.readyState };
         case "get_dom_text": {
@@ -376,8 +378,17 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
     return { scrolled: true, delta_y: result.delta_y };
   }
   if (command === "scroll_home_top") {
-    await performHumanInput({ action: "scroll", x: result.x, y: result.y, delta_y: -Math.max(1200, Math.min(result.scroll_y || 4000, 4000)), scale: result.device_pixel_ratio || 1 }, tab.id);
-    return { scrolled_to_top: true, url: result.url };
+    let scrollY = result.scroll_y || 0;
+    for (let attempt = 0; attempt < 10 && scrollY > 3; attempt++) {
+      await performHumanInput({
+        action: "scroll", x: result.x, y: result.y, delta_y: -4000,
+        scale: result.device_pixel_ratio || 1
+      }, tab.id);
+      await new Promise((resolve) => setTimeout(resolve, 140));
+      const state = await executeInPage("get_page_scroll", {}, tab.id);
+      scrollY = state.scroll_y || 0;
+    }
+    return { scrolled_to_top: scrollY <= 3, scroll_y: scrollY, url: result.url };
   }
   if (command === "get_following") {
     await performHumanInput({
