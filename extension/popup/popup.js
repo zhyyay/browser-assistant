@@ -49,7 +49,7 @@ loadPostsButton.addEventListener("click", async () => {
       const option = document.createElement("option");
       option.value = post.id;
       const author = post.author?.username || post.author?.display_name || "未知作者";
-      const preview = (post.text || "").replace(/\\s+/g, " ").slice(0, 48);
+      const preview = (post.text || "").replace(/\s+/g, " ").slice(0, 48);
       option.textContent = author + " · " + (preview || "无正文") + " · ID " + post.id;
       replyPostSelect.append(option);
     }
@@ -81,7 +81,7 @@ replyButton.addEventListener("click", async () => {
     return;
   }
   const selected = replyPostSelect.selectedOptions[0]?.textContent || postId;
-  if (!window.confirm("即将向以下推文真实提交回复：\\n" + selected + "\\n\\n回复内容：\\n" + text + "\\n\\n确定提交吗？")) return;
+  if (!window.confirm("即将向以下推文真实提交回复：\n" + selected + "\n\n回复内容：\n" + text + "\n\n确定提交吗？")) return;
 
   replyButton.disabled = true;
   loadPostsButton.disabled = true;
@@ -150,7 +150,7 @@ postButton.addEventListener("click", async () => {
     postText.focus();
     return;
   }
-  if (!window.confirm("确定将以下内容发布到当前登录的 X 账号吗？\\n\\n" + text)) return;
+  if (!window.confirm("确定将以下内容发布到当前登录的 X 账号吗？\n\n" + text)) return;
 
   postButton.disabled = true;
   postButton.textContent = "正在发帖…";
