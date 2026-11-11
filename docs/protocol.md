@@ -30,4 +30,4 @@
 
 Rust 客户端调用 `BrowserClient::get_following()`。扩展每轮读取当前 Following 页面中最多 30 个 `[data-testid="UserCell"]` 用户卡片，并向下滚动一屏的一部分；Rust 客户端以 2–4 秒间隔调用下一轮，每 10 轮额外休息 15–30 秒。用户名去重，结束后一次性返回 JSON，不使用 SQLite。
 
-执行前校验当前地址必须是 `https://x.com/{username}/following`。其他页面会返回错误，不执行滚动或扫描。回关状态为 `mutual`（识别到「关注了你」或 “Follows you”）、`not_mutual`（已识别账号但没有该标记）或 `unknown`（无法解析用户名）。结果包含 `page`、`total`、`scanned`、三类计数和 `users` 数组。
+执行前校验当前地址必须是 `https://x.com/{username}/following`。其他页面会返回错误，不执行滚动或扫描。回关状态为 `mutual`（识别到「关注了你」或 “Follows you”）、`not_mutual`（已识别账号但没有该标记）或 `unknown`（无法解析用户名）。结果包含 `page`、`scan_complete`、`stop_reason`、`total`、`scanned`、三类计数和 `users` 数组。若连续 5 轮没有新增账号，会停止并将 `scan_complete` 标记为 `false`，避免把不完整结果伪装成完整扫描；检测到限流提示则立即返回错误。
