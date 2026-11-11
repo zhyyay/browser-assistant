@@ -28,8 +28,18 @@
 
 ### X Following 互关检测
 
-Rust 客户端调用 `BrowserClient::get_following()` 获取完整扫描结果；调用 `BrowserClient::get_not_following_back()` 则只返回未回关用户数组。两者实现位于 `crates/browser-client/src/x/following.rs`，推文解析位于 `crates/browser-client/src/x/posts.rs`，`lib.rs` 只保留通用连接与 IPC 通信。扩展每轮读取当前 Following 页面中最多 30 个 `[data-testid="UserCell"]` 用户卡片，并向下滚动一屏的一部分；Rust 客户端以 2–4 秒间隔调用下一轮，每 10 轮额外休息 15–30 秒。用户名去重，结束后一次性返回 JSON，不使用 SQLite。
+Rust 客户端调用 `BrowserClient::get_following()` 获取扫描 JSON；调用 `BrowserClient::get_not_following_back()` 则只返回未回关用户数组。实现位于 `crates/browser-client/src/x/following.rs`。扩展弹窗提供「扫描没有回关我的用户」按钮。扫描结果直接返回 JSON，不使用 SQLite。
 
-扩展弹窗也提供「扫描没有回关我的用户」按钮。点击后由扩展在同一活动标签页分批执行扫描，每批之间等待 3–5 秒，每 8 批额外休息 20–30 秒，最多执行 100 轮；结果中的 `users` 只包含 `follow_status=not_mutual` 的用户，计数仍包含已扫描的互关和 unknown 用户。请保持弹窗打开，且不要在扫描过程中切换/关闭目标页面。
+执行前以及每一轮扫描前都会校验目标仍是原来的 `https://x.com/{用户名}/following` 页面。每轮读取当前 DOM 中全部 `[data-testid="UserCell"]`，不再固定截取前 30 个；按用户名去重，并优先用后续识别出的明确状态更新之前的 unknown 记录。滚动定位到最后一个已加载用户卡片附近，滚动后观察列表 DOM 变化，再进入下一轮，以减少固定滚动距离造成的重复读取。
 
-执行前校验当前地址必须是 `https://x.com/{username}/following`。其他页面会返回错误，不执行滚动或扫描。回关状态为 `mutual`（识别到「关注了你」或 “Follows you”）、`not_mutual`（已识别账号但没有该标记）或 `unknown`（无法解析用户名）。结果包含 `page`、`scan_complete`、`stop_reason`、`total`、`scanned`、三类计数和 `users` 数组。若连续 5 轮没有新增账号，会停止并将 `scan_complete` 标记为 `false`，避免把不完整结果伪装成完整扫描；检测到限流提示则立即返回错误。
+扫描最多 100 轮。普通页面加载或浏览器请求错误最多重试 3 次；每轮之间约等待 1.8–3 秒，每 8 轮额外休息约 12–32 秒。连续没有新增用户时，还会结合滚动是否停滞判断，不会仅凭重复卡片立即判定到底。连续滚动停滞或达到轮数上限会以未完成状态返回。
+
+异常策略：
+- Following 列表首次加载最多等待 10 秒；超时记为 `page_load_timeout`。
+- 单张用户卡片解析失败会记录到 `errors`，继续处理其他卡片。
+- 扫描期间 URL 变化或标签页关闭会停止任务。
+- 检测到限流提示（如 429/请求过于频繁）或安全验证页面时立即停止，不自动重试。
+- 普通加载/请求异常最多重试 3 次；重试耗尽后停止。
+- 所有可恢复的停止路径尽量保留已经扫描到的用户。
+
+扫描结果包含 `success`、`page`、`scan_complete`、`stop_reason`、`total`、`scanned`、`mutual_count`、`not_following_back_count`、`unknown_count`、`rounds`、`retry_count`、`users` 和 `errors`。其中 `users` 在完整扫描结果中包含所有识别到的用户；扩展弹窗结果中的 `users` 仅包含未回关用户。若 `scan_complete=false`，必须把结果视为部分结果，不能当作完整 Following 清单。
