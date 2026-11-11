@@ -372,7 +372,7 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
     return { typed: true, cleared_first: true, verified: true };
   }
   if (command === "scroll") {
-    await performHumanInput({ action: "scroll", x: result.x, y: result.y, delta_y: result.delta_y, scale: 1 }, tab.id);
+    await performHumanInput({ action: "scroll", x: result.x, y: result.y, delta_y: result.delta_y, scale: result.device_pixel_ratio || 1 }, tab.id);
     return { scrolled: true, delta_y: result.delta_y };
   }
   if (command === "scroll_home_top") {
