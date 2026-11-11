@@ -417,6 +417,19 @@ async function waitForXComposer(tabId, timeoutMs = 12000) {
   throw new Error(lastError?.message || "COMPOSER_WAIT_TIMEOUT: 等待 X 发帖编辑框超时");
 }
 
+async function waitForXPath(tabId, expectedPath, timeoutMs = 12000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const tab = await chrome.tabs.get(tabId);
+    try {
+      const url = new URL(tab.url || "");
+      if (url.hostname === "x.com" && url.pathname.replace(/\\/$/, "") === expectedPath) return url.href;
+    } catch (_) {}
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error("NAVIGATION_TIMEOUT: 等待 X 页面路径 " + expectedPath + " 超时");
+}
+
 async function enterXComposer(tabId, strategy) {
   const tab = await chrome.tabs.get(tabId);
   const url = new URL(tab.url || "");
@@ -426,12 +439,14 @@ async function enterXComposer(tabId, strategy) {
 
   if (strategy === "home_click") {
     await executeInPage("click_home_link", {}, tabId);
+    await waitForXPath(tabId, "/home", 10000);
     await waitForXComposer(tabId, 10000);
     return;
   }
 
   if (strategy === "compose_url") {
     await chrome.tabs.update(tabId, { url: "https://x.com/compose/post" });
+    await waitForXPath(tabId, "/compose/post", 12000);
     await waitForXComposer(tabId, 12000);
     return;
   }
@@ -439,6 +454,7 @@ async function enterXComposer(tabId, strategy) {
   if (strategy === "home_top") {
     if (!/^\/home\/?$/.test(url.pathname)) {
       await chrome.tabs.update(tabId, { url: "https://x.com/home" });
+      await waitForXPath(tabId, "/home", 12000);
     }
     await executeInPage("scroll_home_top", {}, tabId);
     await waitForXComposer(tabId, 10000);
