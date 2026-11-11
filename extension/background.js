@@ -96,6 +96,100 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
             posts
           };
         }
+        case "post_x_tweet": {
+          if (location.hostname !== "x.com") {
+            throw new Error("PAGE_CHANGED: 自动发帖只允许在 x.com 页面执行");
+          }
+          const content = String(params.text ?? "").trim();
+          if (!content) throw new Error("INVALID_CONTENT: 发帖内容不能为空");
+
+          const bodyText = compact(document.body?.innerText || "", 16000);
+          if (/rate limit exceeded|too many requests|try again later|请求过于频繁|操作过于频繁|暂时限制了部分功能/i.test(bodyText)) {
+            throw new Error("RATE_LIMITED: 检测到 X 限流提示，未提交发帖");
+          }
+          if (/确认你的身份|验证你是人类|verify you are human|account access|账号访问受限|暂时锁定/i.test(bodyText)) {
+            throw new Error("CHALLENGE_DETECTED: 页面出现安全验证或账号访问限制，未提交发帖");
+          }
+
+          const visible = (element) => {
+            if (!(element instanceof HTMLElement)) return false;
+            const rect = element.getBoundingClientRect();
+            const style = getComputedStyle(element);
+            return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+          };
+          const editor = [...document.querySelectorAll('[data-testid="tweetTextarea_0"], [role="textbox"][data-testid="tweetTextarea_0"]')]
+            .find(visible);
+          if (!editor) {
+            throw new Error("COMPOSER_NOT_FOUND: 未找到 X 发帖编辑框，请打开 X 发帖页面或发帖窗口");
+          }
+          if (editor.getAttribute("aria-disabled") === "true" || editor.getAttribute("contenteditable") === "false") {
+            throw new Error("COMPOSER_DISABLED: X 发帖编辑框当前不可用");
+          }
+          const existingText = compact(editor.innerText || editor.textContent || "", 10000);
+          if (existingText) {
+            throw new Error("COMPOSER_NOT_EMPTY: 编辑框已有内容，为避免覆盖草稿，已取消发帖");
+          }
+
+          editor.focus();
+          // X uses a contenteditable editor. Dispatch a real input event so its
+          // React state observes the inserted text before the submit button is read.
+          const selection = window.getSelection();
+          const range = document.createRange();
+          range.selectNodeContents(editor);
+          range.collapse(false);
+          selection?.removeAllRanges();
+          selection?.addRange(range);
+          const inserted = document.execCommand("insertText", false, content);
+          if (!inserted || compact(editor.innerText || editor.textContent || "", 10000) !== compact(content, 10000)) {
+            editor.textContent = content;
+            editor.dispatchEvent(new InputEvent("input", {
+              bubbles: true, inputType: "insertText", data: content
+            }));
+          }
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          const actualText = compact(editor.innerText || editor.textContent || "", 10000);
+          if (actualText !== compact(content, 10000)) {
+            throw new Error("CONTENT_VERIFY_FAILED: 发帖内容写入后校验不一致，未点击提交");
+          }
+
+          const submitButton = [...document.querySelectorAll('[data-testid="tweetButton"], [data-testid="tweetButtonInline"]')]
+            .find((button) => visible(button) &&
+              !button.disabled && button.getAttribute("aria-disabled") !== "true");
+          if (!submitButton) {
+            throw new Error("SUBMIT_BUTTON_NOT_FOUND: 未找到可用的发帖按钮，内容尚未提交");
+          }
+
+          submitButton.click();
+          const timeoutMs = Math.min(Math.max(Number(params.confirm_timeout_ms) || 8000, 3000), 15000);
+          const startedAt = Date.now();
+          let confirmationText = null;
+          while (Date.now() - startedAt < timeoutMs) {
+            const toast = [...document.querySelectorAll('[data-testid="toast"], [role="alert"]')]
+              .filter(visible)
+              .map((node) => compact(node.innerText || node.textContent || "", 500))
+              .find((value) => /你的贴已发送|你的帖子已发送|post sent|your post was sent|your post has been sent/i.test(value));
+            if (toast) {
+              confirmationText = toast;
+              break;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 300));
+          }
+
+          if (confirmationText) {
+            return {
+              status: "sent",
+              submitted: true,
+              confirmed: true,
+              confirmation: confirmationText
+            };
+          }
+          return {
+            status: "confirmation_unknown",
+            submitted: true,
+            confirmed: false,
+            message: "已点击发帖按钮，但未检测到明确的发送成功提示；请检查个人主页，勿直接重复提交"
+          };
+        }
         case "get_following": {
           const currentUrl = new URL(location.href);
           const pageMatch = currentUrl.pathname.match(/^\\/([A-Za-z0-9_]{1,15})\\/following\\/?$/i);
@@ -402,7 +496,7 @@ function handleNativeMessage(message) {
     (async () => {
       try {
         const allowed = new Set([
-          "get_page_info", "get_dom_text", "find_elements", "get_x_posts", "get_following",
+          "get_page_info", "get_dom_text", "find_elements", "get_x_posts", "post_x_tweet", "get_following",
           "get_element_rect", "click", "type_text", "scroll"
         ]);
         if (!allowed.has(message.command)) throw new Error("unsupported desktop command: " + message.command);
