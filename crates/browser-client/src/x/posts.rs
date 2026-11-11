@@ -12,3 +12,19 @@ impl BrowserClient {
         self.execute(BrowserCommand::GetXPosts { limit })
     }
 }
+
+ 
+ /// Publish a post on the currently active X page.
+ ///
+ /// The page must contain an empty, visible X composer. Existing draft text is
+ /// never overwritten. A successful click without a verifiable success toast
+ /// returns `confirmation_unknown`; callers must not automatically retry it.
+ pub fn post_x_tweet(&mut self, text: &str) -> Result<BrowserResponse> {
+     let content = text.trim();
+     if content.is_empty() {
+         anyhow::bail!("X 发帖内容不能为空");
+     }
+     self.execute(BrowserCommand::PostXTweet {
+         text: content.to_owned(),
+     })
+ }
