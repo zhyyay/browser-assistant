@@ -76,10 +76,13 @@ impl BrowserClient {
             page = result.get("page").cloned().unwrap_or(serde_json::Value::Null);
             let batch = result.get("users").and_then(serde_json::Value::as_array).cloned().unwrap_or_default();
             let before = users.len();
-            for user in batch {
-                if let Some(username) = user.get("username").and_then(serde_json::Value::as_str) {
-                    users.entry(username.to_ascii_lowercase()).or_insert(user);
-                }
+            for (index, user) in batch.into_iter().enumerate() {
+                let key = user.get("username").and_then(serde_json::Value::as_str)
+                    .map(str::to_ascii_lowercase)
+                    .or_else(|| user.get("profile_url").and_then(serde_json::Value::as_str).map(str::to_owned))
+                    .or_else(|| user.get("display_name").and_then(serde_json::Value::as_str).map(|name| format!("unknown:{name}")))
+                    .unwrap_or_else(|| format!("unknown:{rounds}:{index}"));
+                users.entry(key).or_insert(user);
             }
             let added = users.len().saturating_sub(before);
             consecutive_empty = if added == 0 { consecutive_empty + 1 } else { 0 };
