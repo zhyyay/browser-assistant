@@ -18,7 +18,7 @@
 
 页面操作由扩展发起前，先向 Rust Host 请求 `authorize_command`。Rust Host 校验动作是否在允许列表中，扩展收到授权后才在当前活动标签页执行。这样 Rust Host 参与每次命令的授权与响应。
 
-支持动作：`get_page_info`、`get_dom_text`、`find_elements`、`get_x_posts`、`get_following`、`get_element_rect`、`click`、`type_text`、`scroll`。
+支持动作：`get_page_info`、`get_dom_text`、`find_elements`、`get_x_posts`、`post_x_tweet`、`get_following`、`get_element_rect`、`click`、`type_text`、`scroll`。
 
 ### X 推文解析
 
@@ -43,3 +43,11 @@ Rust 客户端调用 `BrowserClient::get_following()` 获取扫描 JSON；调用
 - 所有可恢复的停止路径尽量保留已经扫描到的用户。
 
 扫描结果包含 `success`、`page`、`scan_complete`、`stop_reason`、`total`、`scanned`、`mutual_count`、`not_following_back_count`、`unknown_count`、`rounds`、`retry_count`、`users` 和 `errors`。其中 `users` 在完整扫描结果中包含所有识别到的用户；扩展弹窗结果中的 `users` 仅包含未回关用户。若 `scan_complete=false`，必须把结果视为部分结果，不能当作完整 Following 清单。
+
+### X 自动发帖
+
+Rust 客户端可调用 `BrowserClient::post_x_tweet(content)` 发布文本推文。Native Messaging 命令为 `post_x_tweet`，参数为 `{"text":"要发布的内容"}`。执行前要求当前活动页面位于 `x.com)，且页面存在可见、可用的 X 发帖编辑框。
+
+执行流程：检查页面与安全验证/限流提示 → 确认编辑框为空（不覆盖已有草稿）→ 写入内容并回读校验 → 查找可用的发帖按钮 → 点击一次 → 等待 X 的发送成功提示。成功响应的 `result.status` 为 `sent`；若按钮已点击但无法确认成功，返回 `confirmation_unknown`（`submitted=true`）。这种不确定状态不得自动重试，以免重复发帖。提交前的错误会返回明确错误码，例如 `PAGE_CHANGED`、`INVALID_CONTENT`、`COMPOSER_NOT_FOUND`、`COMPOSER_NOT_EMPTY`、`CONTENT_VERIFY_FAILED` 或 `SUBMIT_BUTTON_NOT_FOUND`。
+
+该接口不读取 Cookie、密码或浏览器登录凭据；由当前 X 页面自身的登录状态完成发帖。调用方应在提交前向用户展示待发布内容并取得明确授权。
