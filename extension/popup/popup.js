@@ -180,3 +180,15 @@ postButton.addEventListener("click", async () => {
     postButton.disabled = false;
   }
 });
+
+
+// Opening the extension popup is also an explicit user action to connect the host.
+window.addEventListener("DOMContentLoaded", async () => {
+  status.textContent = "正在连接 Rust Native Host…";
+  try {
+    const result = await send({ type: "native_ping" });
+    status.textContent = result?.ok ? "Rust 已连接" : "连接失败";
+  } catch (error) {
+    status.textContent = "连接失败：" + (error.message || String(error));
+  }
+});
