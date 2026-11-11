@@ -15,7 +15,7 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
   const [injection] = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
     args: [{ command, params }],
-    func: ({ command, params }) => {
+    func: async ({ command, params }) => {
       const compact = (value, max = 500) => String(value ?? "").replace(/\s+/g, " ").trim().slice(0, max);
       const rectOf = (element) => {
         const rect = element.getBoundingClientRect();
@@ -97,43 +97,70 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
           };
         }
         case "get_following": {
-          const limit = Math.min(Math.max(Number(params.limit) || 30, 1), 50);
           const currentUrl = new URL(location.href);
-          const pageMatch = currentUrl.pathname.match(/^\/([A-Za-z0-9_]{1,15})\/following\/?$/i);
+          const pageMatch = currentUrl.pathname.match(/^\\/([A-Za-z0-9_]{1,15})\\/following\\/?$/i);
           if (currentUrl.hostname !== "x.com" || !pageMatch) {
-            throw new Error("当前页面不是 X 用户 Following 页面；请打开 https://x.com/{用户名}/following 后重试");
+            throw new Error("PAGE_CHANGED: 当前页面不是 X 用户 Following 页面");
           }
 
-          const pageText = compact(document.body?.innerText || "", 12000);
-          if (/rate limit exceeded|too many requests|try again later|请求过于频繁|操作过于频繁|暂时限制了部分功能/i.test(pageText)) {
-            throw new Error("检测到 X 限流提示，已停止 Following 扫描；请稍后手动恢复");
+          const bodyText = compact(document.body?.innerText || "", 16000);
+          if (/rate limit exceeded|too many requests|try again later|请求过于频繁|操作过于频繁|暂时限制了部分功能/i.test(bodyText)) {
+            throw new Error("RATE_LIMITED: 检测到 X 限流提示，已停止扫描");
+          }
+          if (/确认你的身份|验证你是人类|verify you are human|account access|账号访问受限|暂时锁定/i.test(bodyText)) {
+            throw new Error("CHALLENGE_DETECTED: 页面出现安全验证或账号访问限制，已停止扫描");
           }
 
-          const cells = [...document.querySelectorAll('[data-testid="UserCell"]')].slice(0, limit);
-          const users = cells.map((cell) => {
-            const text = compact(cell.innerText || "", 2000);
-            const profileLink = [...cell.querySelectorAll('a[href^="/"]')]
-              .find((link) => /^\/[A-Za-z0-9_]{1,15}\/?$/.test(link.getAttribute("href") || ""));
-            const href = profileLink?.getAttribute("href") || null;
-            const username = href ? href.replace(/^\//, "").replace(/\/$/, "") : null;
-            const displayName = compact(
-              [...(profileLink?.querySelectorAll("span") || [])]
-                .map((node) => node.innerText)
-                .find((value) => value && !value.trim().startsWith("@")) || profileLink?.innerText || "",
-              120
-            ).replace(/@?[A-Za-z0-9_]{1,15}/g, (value) => value.startsWith("@") ? "" : value).trim() || null;
-            const followsYou = /关注了你|Follows you/i.test(text);
-            return {
-              username: username ? username.toLowerCase() : null,
-              display_name: displayName,
-              profile_url: username ? new URL("/" + username, location.origin).href : null,
-              follow_status: username ? (followsYou ? "mutual" : "not_mutual") : "unknown"
-            };
-          });
+          const waitForCells = async () => {
+            if (document.querySelector('[data-testid="UserCell"]')) return true;
+            return await new Promise((resolve) => {
+              let finished = false;
+              const observer = new MutationObserver(() => {
+                if (document.querySelector('[data-testid="UserCell"]')) finish(true);
+              });
+              const timer = setTimeout(() => finish(false), 10000);
+              const finish = (value) => {
+                if (finished) return;
+                finished = true;
+                clearTimeout(timer);
+                observer.disconnect();
+                resolve(value);
+              };
+              observer.observe(document.documentElement, { childList: true, subtree: true });
+            });
+          };
+          if (!(await waitForCells())) throw new Error("PAGE_LOAD_TIMEOUT: 等待 Following 用户列表超时");
+
+          const cells = [...document.querySelectorAll('[data-testid="UserCell"]')];
+          const users = [];
+          const errors = [];
+          for (const [index, cell] of cells.entries()) {
+            try {
+              const text = compact(cell.innerText || "", 2000);
+              const profileLink = [...cell.querySelectorAll('a[href^="/"]')]
+                .find((link) => /^\\/[A-Za-z0-9_]{1,15}\\/?$/.test(link.getAttribute("href") || ""));
+              const href = profileLink?.getAttribute("href") || null;
+              const username = href ? href.replace(/^\\//, "").replace(/\\/$/, "") : null;
+              const displayName = compact(
+                [...(profileLink?.querySelectorAll("span") || [])]
+                  .map((node) => node.innerText)
+                  .find((value) => value && !value.trim().startsWith("@")) || profileLink?.innerText || "",
+                120
+              ).replace(/@?[A-Za-z0-9_]{1,15}/g, (value) => value.startsWith("@") ? "" : value).trim() || null;
+              users.push({
+                username: username ? username.toLowerCase() : null,
+                display_name: displayName,
+                profile_url: username ? new URL("/" + username, location.origin).href : null,
+                follow_status: username ? (/关注了你|Follows you/i.test(text) ? "mutual" : "not_mutual") : "unknown"
+              });
+            } catch (error) {
+              errors.push({ stage: "parse_user", index, message: compact(error?.message || error, 300) });
+            }
+          }
 
           let scroller = document.scrollingElement || document.documentElement;
-          const firstCell = cells[0];
-          for (let element = firstCell?.parentElement; element && element !== document.body; element = element.parentElement) {
+          const lastCell = cells[cells.length - 1];
+          for (let element = lastCell?.parentElement; element && element !== document.body; element = element.parentElement) {
             const style = getComputedStyle(element);
             if (/(auto|scroll)/.test(style.overflowY) && element.scrollHeight > element.clientHeight + 80) {
               scroller = element;
@@ -141,17 +168,52 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
             }
           }
           const beforeTop = scroller.scrollTop;
+          const beforeHeight = scroller.scrollHeight;
           const clientHeight = scroller.clientHeight || window.innerHeight;
-          const scrollHeight = scroller.scrollHeight || document.documentElement.scrollHeight;
-          scroller.scrollBy({ top: Math.max(300, Math.floor(clientHeight * 0.85)), behavior: "auto" });
+          if (lastCell) {
+            lastCell.scrollIntoView({ block: "end", behavior: "auto" });
+            if (scroller === document.scrollingElement || scroller === document.documentElement) {
+              window.scrollBy({ top: Math.max(120, Math.floor(clientHeight * 0.55)), behavior: "auto" });
+            }
+          } else {
+            scroller.scrollBy({ top: Math.max(250, Math.floor(clientHeight * 0.65)), behavior: "auto" });
+          }
+
           const scrollTop = scroller.scrollTop;
-          const hasMore = scrollTop + clientHeight < scrollHeight - 20;
+          const scrollHeight = scroller.scrollHeight;
+          const hasMore = scrollTop + clientHeight < scrollHeight - 30;
+          const moved = scrollTop > beforeTop + 2 || scrollHeight > beforeHeight + 2;
+          // Wait briefly for X's virtualized list to append/recycle cards before the next read.
+          if (hasMore) {
+            await new Promise((resolve) => {
+              let finished = false;
+              let quietTimer;
+              const observer = new MutationObserver(() => {
+                clearTimeout(quietTimer);
+                quietTimer = setTimeout(finish, 900);
+              });
+              const timeout = setTimeout(finish, 4500);
+              const finish = () => {
+                if (finished) return;
+                finished = true;
+                clearTimeout(timeout);
+                clearTimeout(quietTimer);
+                observer.disconnect();
+                resolve();
+              };
+              observer.observe(document.querySelector('[data-testid="primaryColumn"]') || document.body, {
+                childList: true, subtree: true, characterData: true
+              });
+              quietTimer = setTimeout(finish, 1400);
+            });
+          }
           return {
             success: true,
             page: { url: location.href, username: pageMatch[1], type: "following" },
             batch_count: users.length,
             users,
-            scroll: { before_top: beforeTop, top: scrollTop, height: scrollHeight, viewport_height: clientHeight, has_more: hasMore }
+            errors,
+            scroll: { before_top: beforeTop, top: scrollTop, height: scrollHeight, viewport_height: clientHeight, has_more: hasMore, moved }
           };
         }
         case "get_page_info":
@@ -211,73 +273,136 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
 
 async function scanNotFollowingBack() {
   const tab = await getActiveTab();
+  const initialUrl = new URL(tab.url);
+  const followingMatch = initialUrl.hostname === "x.com"
+    ? initialUrl.pathname.match(/^\\/([A-Za-z0-9_]{1,15})\\/following\\/?$/i)
+    : null;
+  if (!followingMatch) {
+    throw new Error("PAGE_CHANGED: 请先打开 https://x.com/{用户名}/following 页面");
+  }
+
   const authorization = await nativeRequest("authorize_command", { action: "get_following" });
   if (!authorization?.ok || !authorization.result?.authorized) {
     throw new Error(authorization?.error || "Rust Host rejected the Following scan");
   }
 
   const users = new Map();
-  let page = null;
+  const errors = [];
+  let page = { url: tab.url, username: followingMatch[1], type: "following" };
   let rounds = 0;
   let consecutiveEmpty = 0;
+  let stagnantRounds = 0;
   let scanComplete = false;
-  let stopReason = "unknown";
+  let stopReason = "max_rounds_reached";
+  let retryCount = 0;
+
+  const classifyError = (message) => {
+    const value = String(message || "");
+    if (value.includes("RATE_LIMITED")) return "rate_limited";
+    if (value.includes("CHALLENGE_DETECTED")) return "challenge_detected";
+    if (value.includes("PAGE_CHANGED") || value.includes("not X")) return "page_changed";
+    if (value.includes("PAGE_LOAD_TIMEOUT")) return "page_load_timeout";
+    if (/No tab|tab.*not found|Cannot access contents|Frame.*removed/i.test(value)) return "tab_closed";
+    return "page_error";
+  };
+  const snapshot = (success, reason) => {
+    const all = [...users.values()];
+    const notFollowingBack = all.filter((user) => user.follow_status === "not_mutual");
+    const mutualCount = all.filter((user) => user.follow_status === "mutual").length;
+    return {
+      success,
+      page,
+      scan_complete: scanComplete,
+      stop_reason: reason,
+      total: all.length,
+      scanned: all.length,
+      mutual_count: mutualCount,
+      not_following_back_count: notFollowingBack.length,
+      unknown_count: all.length - mutualCount - notFollowingBack.length,
+      rounds,
+      retry_count: retryCount,
+      users: notFollowingBack,
+      errors
+    };
+  };
 
   while (rounds < 100) {
-    const batch = await executeInPage("get_following", { limit: 30 }, tab.id);
-    if (!batch?.success) throw new Error("Following 页面扫描返回了无效结果");
+    let batch = null;
+    let lastError = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const currentTab = await chrome.tabs.get(tab.id);
+        const current = new URL(currentTab.url || "");
+        if (current.origin !== initialUrl.origin || current.pathname !== initialUrl.pathname) {
+          throw new Error("PAGE_CHANGED: 扫描期间目标页面发生变化");
+        }
+        batch = await executeInPage("get_following", {}, tab.id);
+        break;
+      } catch (error) {
+        lastError = error;
+        const reason = classifyError(error?.message || error);
+        if (reason === "rate_limited" || reason === "challenge_detected" ||
+            reason === "page_changed" || reason === "tab_closed") {
+          stopReason = reason;
+          errors.push({ stage: "scan_batch", round: rounds + 1, message: String(error?.message || error) });
+          return snapshot(false, stopReason);
+        }
+        retryCount++;
+        errors.push({ stage: "load_users", round: rounds + 1, attempt: attempt + 1, message: String(error?.message || error) });
+        if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 1500 * (attempt + 1)));
+      }
+    }
+    if (!batch) {
+      stopReason = classifyError(lastError?.message || lastError);
+      return snapshot(false, stopReason);
+    }
+    if (!batch.success) {
+      stopReason = "unknown_error";
+      errors.push({ stage: "parse_batch", round: rounds + 1, message: "页面返回无效批次" });
+      return snapshot(false, stopReason);
+    }
 
     page = batch.page || page;
+    if (Array.isArray(batch.errors)) errors.push(...batch.errors.map((item) => ({ ...item, round: rounds + 1 })));
     const before = users.size;
     for (const [index, user] of (batch.users || []).entries()) {
-      const key = user.username
-        ? "@" + user.username.toLowerCase()
-        : user.profile_url || (user.display_name ? "name:" + user.display_name : "unknown:" + rounds + ":" + index);
+      const username = user.username ? String(user.username).toLowerCase() : null;
+      if (!username) {
+        errors.push({ stage: "deduplicate_user", round: rounds + 1, index, message: "用户卡片缺少可识别用户名，已保留 unknown 记录" });
+      }
+      const key = username ? "@" + username : user.profile_url || (user.display_name ? "name:" + user.display_name : "unknown:" + rounds + ":" + index);
       if (!users.has(key)) users.set(key, user);
+      else if (users.get(key).follow_status === "unknown" && user.follow_status !== "unknown") users.set(key, user);
     }
 
     const added = users.size - before;
     consecutiveEmpty = added === 0 ? consecutiveEmpty + 1 : 0;
-    rounds += 1;
+    rounds++;
+    const scroll = batch.scroll || {};
+    stagnantRounds = scroll.moved ? 0 : stagnantRounds + 1;
 
-    if (!batch.scroll?.has_more) {
+    if (!scroll.has_more) {
       scanComplete = true;
       stopReason = "reached_bottom";
       break;
     }
-    if (consecutiveEmpty >= 5) {
-      stopReason = "no_new_users_after_5_rounds";
+    if (consecutiveEmpty >= 5 && stagnantRounds >= 3) {
+      stopReason = "no_new_users";
       break;
     }
-    if (rounds >= 100) {
-      stopReason = "maximum_rounds_reached";
+    if (stagnantRounds >= 5) {
+      stopReason = "scroll_stalled";
       break;
     }
+    if (rounds >= 100) break;
 
-    // Conservative pacing: one DOM batch every 3–5 seconds, plus a longer rest every 8 batches.
-    await new Promise((resolve) => setTimeout(resolve, 3000 + Math.floor(Math.random() * 2001)));
+    await new Promise((resolve) => setTimeout(resolve, 1800 + Math.floor(Math.random() * 1201)));
     if (rounds % 8 === 0) {
-      await new Promise((resolve) => setTimeout(resolve, 20000 + Math.floor(Math.random() * 10001)));
+      await new Promise((resolve) => setTimeout(resolve, 12000 + Math.floor(Math.random() * 9001)));
     }
   }
 
-  const allUsers = [...users.values()];
-  const notFollowingBack = allUsers.filter((user) => user.follow_status === "not_mutual");
-  const mutualCount = allUsers.filter((user) => user.follow_status === "mutual").length;
-  const unknownCount = allUsers.length - mutualCount - notFollowingBack.length;
-
-  return {
-    success: true,
-    page,
-    scan_complete: scanComplete,
-    stop_reason: stopReason,
-    total: allUsers.length,
-    scanned: allUsers.length,
-    mutual_count: mutualCount,
-    not_following_back_count: notFollowingBack.length,
-    unknown_count: unknownCount,
-    users: notFollowingBack
-  };
+  return snapshot(scanComplete, stopReason);
 }
 
 function handleNativeMessage(message) {
