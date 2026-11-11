@@ -48,18 +48,21 @@ export async function ensureAutomationTab(url = "https://x.com/home") {
 
     if (!windowInfo) {
       windowInfo = await chrome.windows.create({
-        url: "about:blank",
+        url,
         focused: false,
         type: "normal"
       });
       windowId = windowInfo.id;
+      tab = windowInfo.tabs?.[0] || await chrome.tabs.query({ windowId }).then((tabs) => tabs[0]);
     }
 
-    tab = await chrome.tabs.create({
-      windowId,
-      url,
-      active: false
-    });
+    if (!tab) {
+      tab = await chrome.tabs.create({
+        windowId,
+        url,
+        active: false
+      });
+    }
 
     let groupId = null;
     try {
