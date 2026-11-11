@@ -51,7 +51,7 @@ impl BrowserClient {
         };
 
         let mut payload = serde_json::to_vec(&envelope)?;
-        payload.push(b'\\n');
+        payload.push(b'\n');
         reader.get_mut().write_all(&payload).context("writing IPC request")?;
         reader.get_mut().flush()?;
 
