@@ -493,7 +493,7 @@ async function enterXComposer(tabId, strategy) {
 }
 
 async function executePostXTweet(params = {}, fixedTabId = null) {
-  const tab = fixedTabId === null ? (await ensureAutomationTab("https://x.com/home")).tab : await chrome.tabs.get(fixedTabId);
+  const tab = fixedTabId === null ? (await ensureAutomationTab("https://x.com/home", "x-post")).tab : await chrome.tabs.get(fixedTabId);
   const initialUrl = new URL(tab.url || "");
   if (initialUrl.hostname !== "x.com") {
     throw new Error("PAGE_CHANGED: 请先在 X 页面登录并打开任意 X 页面");
@@ -559,7 +559,7 @@ async function executePostXTweet(params = {}, fixedTabId = null) {
 async function scanNotFollowingBack() {
   const sourceTab = await getActiveTab();
   const initialUrl = new URL(sourceTab.url);
-  const ownedSession = await ensureAutomationTab(sourceTab.url);
+  const ownedSession = await ensureAutomationTab(sourceTab.url, "x-following");
   const tab = ownedSession.tab;
   const followingMatch = initialUrl.hostname === "x.com"
     ? initialUrl.pathname.match(/^\/([A-Za-z0-9_]{1,15})\/following\/?$/i)
