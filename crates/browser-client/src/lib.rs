@@ -56,6 +56,8 @@ impl BrowserClient {
         let mut page = serde_json::Value::Null;
         let mut rounds = 0_usize;
         let mut consecutive_empty = 0_usize;
+        let mut scan_complete = false;
+        let mut stop_reason = "no_new_users";
 
         loop {
             let response = self.execute(BrowserCommand::GetFollowing { limit: Some(30) })?;
@@ -84,7 +86,13 @@ impl BrowserClient {
             rounds += 1;
 
             let has_more = result.pointer("/scroll/has_more").and_then(serde_json::Value::as_bool).unwrap_or(false);
-            if !has_more || consecutive_empty >= 5 {
+            if !has_more {
+                scan_complete = true;
+                stop_reason = "reached_bottom";
+                break;
+            }
+            if consecutive_empty >= 5 {
+                stop_reason = "no_new_users_after_5_rounds";
                 break;
             }
 
@@ -113,6 +121,8 @@ impl BrowserClient {
             result: Some(serde_json::json!({
                 "success": true,
                 "page": page,
+                "scan_complete": scan_complete,
+                "stop_reason": stop_reason,
                 "total": total,
                 "scanned": total,
                 "mutual_count": mutual_count,
