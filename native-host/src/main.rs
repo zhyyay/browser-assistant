@@ -184,7 +184,8 @@ fn write_ipc_response<W: Write>(writer: &mut W, value: Value) -> Result<()> {
 
 fn page_action_name(command: &BrowserCommand) -> Option<&'static str> {
     match command {
-        BrowserCommand::GetPageInfo => Some("get_page_info"),\n        BrowserCommand::GetXPosts { .. } => Some("get_x_posts"),
+        BrowserCommand::GetPageInfo => Some("get_page_info"),
+        BrowserCommand::GetXPosts { .. } => Some("get_x_posts"),
         BrowserCommand::GetDomText { .. } => Some("get_dom_text"),
         BrowserCommand::FindElements { .. } => Some("find_elements"),
         BrowserCommand::GetElementRect { .. } => Some("get_element_rect"),
