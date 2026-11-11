@@ -51,7 +51,7 @@ async function executeInPage(command, params = {}) {
     target: { tabId: tab.id },
     args: [{ command, params }],
     func: ({ command, params }) => {
-      const compact = (value, max = 500) => String(value ?? "").replace(/\\s+/g, " ").trim().slice(0, max);
+      const compact = (value, max = 500) => String(value ?? "").replace(/\s+/g, " ").trim().slice(0, max);
       const rectOf = (element) => {
         const rect = element.getBoundingClientRect();
         return {
