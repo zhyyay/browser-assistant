@@ -7,6 +7,7 @@ pub enum BrowserCommand {
     AuthorizeCommand { action: String },
     GetPageInfo,
     GetXPosts { limit: Option<usize> },
+    PostXTweet { text: String },
     GetFollowing { limit: Option<usize> },
     GetDomText { max_chars: Option<usize> },
     FindElements { selector: String, limit: Option<usize> },
