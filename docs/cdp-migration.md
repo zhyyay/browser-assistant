@@ -1,35 +1,53 @@
 # CDP browser control migration
 
-This branch introduces the first layer of a CDP-based automation architecture.
+## Implemented on this branch
 
-## Design
+- Added `extension/cdp/transport.js` using `chrome.debugger` and Chrome DevTools
+  Protocol input events.
+- Added `extension/cdp/session_manager.js` to create/reuse a dedicated,
+  non-focused automation window and a tab group named `浏览器助手自动化`.
+- Added the `debugger`, `storage` and `tabGroups` extension permissions.
+- Routed the existing extension click, typing, scroll and navigation input bridge
+  through CDP / Chrome Tabs API. It no longer calls the Native Host's Windows
+  SendInput path for normal page operations.
+- X post publishing now uses the owned automation tab.
+- Following scanning copies the currently selected Following URL into the owned
+  automation tab, leaving the user's original tab unscrolled.
+- Text input clears the existing value first and verifies the page value after
+  insertion.
+- Kept the old Windows input implementation in Native Host as a legacy fallback;
+  it is not used by the normal extension page-input flow.
 
-- Rust Native Messaging remains the local bridge and public API.
-- The MV3 extension owns Chrome DevTools Protocol attachment via `chrome.debugger`.
-- Automation tabs are created in a separate, non-focused Chrome window and grouped as
-  `浏览器助手自动化`; user tabs are never repurposed.
-- Pointer, keyboard and wheel events are sent to the selected tab through CDP
-  (`Input.dispatchMouseEvent`, `Input.dispatchKeyEvent`, `Input.insertText`).
-- Existing Windows SendInput code remains available during migration, but the CDP
-  transport itself does not move the operating-system cursor or type into another app.
-- Input replacement always clears the existing field before inserting new text and
-  verifies the resulting DOM value.
+## Expected behavior and limitations
 
-## Important Chrome behavior
+- CDP input targets a Chrome tab, not the Windows desktop pointer or keyboard.
+  It should prevent ordinary mouse/keyboard operations in other applications
+  from being overwritten by the automation.
+- The automation window is created with `focused: false`; it is separate from
+  the user's working tabs. Chrome/platform behavior still needs live validation.
+- Chrome may show a debugger notification/banner while the extension is attached.
+  This is an expected security indicator for the `chrome.debugger` permission.
+- Some sites may behave differently in background tabs. X composer submission,
+  toast confirmation, Following list lazy loading, and scrolling must be tested
+  on the user's real Chrome version and account.
+- The extension must be reloaded after updating its manifest permissions.
+- Do not remove the Native Host Windows input module until the CDP flow passes
+  real-world tests. If CDP fails, report the error rather than silently falling
+  back to global mouse/keyboard input and unexpectedly stealing focus.
 
-The `debugger` extension permission is powerful and Chrome may show a debugging
-notification/banner while a tab is attached. This is expected for CDP and must not
-be described as invisible. The automation window is created with `focused: false`,
-but browser/platform behavior and page-specific requirements still need live testing.
-CDP input does not guarantee every website interaction works in a background tab.
+## Local validation
 
-## Migration sequence
+From PowerShell:
 
-1. Add and test the CDP transport and isolated session manager.
-2. Route X post composition through the automation session and CDP input.
-3. Route Following scanning through the same owned tab and CDP wheel input.
-4. Migrate generic BrowserClient commands and add explicit session lifecycle APIs.
-5. Remove Windows SendInput from normal flows; retain it only as an opt-in fallback.
+```powershell
+cd D:\\rust\\browser-assistant
+git pull origin feature/cdp-browser-control
+cargo check --workspace
+cargo build -p browser-assistant-host
+```
 
-No Windows SendInput path should be removed until X posting and Following scanning have
-passed real Chrome tests on the user's machine.
+Then open `chrome://extensions`, reload 浏览器助手, and test:
+1. X Following scan while using another application.
+2. X post composition and one-time submit.
+3. Existing draft replacement and post-submit confirmation.
+4. Close/reopen Chrome and verify session recovery.
