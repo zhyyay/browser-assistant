@@ -1,0 +1,16 @@
+[package]
+name = "browser-assistant-host"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "browser-assistant-host"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+browser-core = { path = "../crates/browser-core" }

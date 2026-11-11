@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>浏览器助手</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <main>
+    <header><h1>浏览器助手</h1><span id="status" class="status">未连接</span></header>
+    <button id="connect">连接 Rust Host</button>
+    <section>
+      <h2>当前活动页面</h2>
+      <button data-command="get_page_info">读取页面信息</button>
+      <button data-command="get_dom_text">读取网页文本</button>
+      <button data-command="find_elements" data-selector="button">查找按钮</button>
+      <button data-command="find_elements" data-selector="input,textarea,[contenteditable=true]">查找输入框</button>
+    </section>
+    <pre id="output">等待操作…</pre>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>
