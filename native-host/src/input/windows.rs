@@ -144,8 +144,9 @@ fn chrome_bounds() -> Result<(Rect, Rect)> {
     Ok((top_rect, render_rect))
 }
 fn viewport_point(params: &Value, render: Rect) -> Result<(i32, i32)> {
-    let x = params.get("x").and_then(Value::as_f64).context("缺少鼠标 x 坐标")?;
-    let y = params.get("y").and_then(Value::as_f64).context("缺少鼠标 y 坐标")?;
+    let scale = params.get("scale").and_then(Value::as_f64).unwrap_or(1.0).clamp(0.5, 4.0);
+    let x = params.get("x").and_then(Value::as_f64).context("缺少鼠标 x 坐标")? * scale;
+    let y = params.get("y").and_then(Value::as_f64).context("缺少鼠标 y 坐标")? * scale;
     let width = render.right - render.left;
     let height = render.bottom - render.top;
     if x < 0.0 || y < 0.0 || x >= width as f64 || y >= height as f64 {
@@ -177,7 +178,7 @@ pub fn execute(params: &Value) -> Result<Value> {
                     let mut remaining = params.get("delta_y").and_then(Value::as_i64).unwrap_or(0).clamp(-4000, 4000) as i32;
                     while remaining != 0 {
                         let step = remaining.clamp(-WHEEL_DELTA, WHEEL_DELTA);
-                        let data = (step.signum() * WHEEL_DELTA) as i32 as u32;
+                        let data = (-step.signum() * WHEEL_DELTA) as i32 as u32;
                         send(&[mouse_input(MOUSE_WHEEL, data)])?;
                         remaining -= step;
                         thread::sleep(Duration::from_millis(90));
