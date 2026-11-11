@@ -11,6 +11,12 @@
     <header><h1>浏览器助手</h1><span id="status" class="status">未连接</span></header>
     <button id="connect">连接 Rust Host</button>
     <section>
+      <h2>X 自动发帖</h2>
+      <textarea id="post-text" rows="4" placeholder="输入要发布到 X 的内容…"></textarea>
+      <button id="post-x-tweet" class="primary-action">自动发帖</button>
+      <p class="hint">会随机选择主页入口、发帖地址或主页顶部入口。点击发布后不会自动重试。</p>
+    </section>
+    <section>
       <h2>当前活动页面</h2>
       <button data-command="get_page_info">读取页面信息</button>
       <button data-command="get_dom_text">读取网页文本</button>
