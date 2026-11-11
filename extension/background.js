@@ -265,9 +265,9 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
             try {
               const text = compact(cell.innerText || "", 2000);
               const profileLink = [...cell.querySelectorAll('a[href^="/"]')]
-                .find((link) => /^\\/[A-Za-z0-9_]{1,15}\\/?$/.test(link.getAttribute("href") || ""));
+                .find((link) => /^\/[A-Za-z0-9_]{1,15}\/?$/.test(link.getAttribute("href") || ""));
               const href = profileLink?.getAttribute("href") || null;
-              const username = href ? href.replace(/^\\//, "").replace(/\\/$/, "") : null;
+              const username = href ? href.replace(/^\//, "").replace(/\/$/, "") : null;
               users.push({
                 username: username ? username.toLowerCase() : null,
                 profile_url: username ? new URL("/" + username, location.origin).href : null,
