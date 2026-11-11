@@ -44,7 +44,14 @@ let response = browser.execute(BrowserCommand::GetPageInfo)?;
 
 ## 安全
 
-使用 `activeTab` 限定页面访问；不读取 Cookie、密码或浏览器个人资料。桌面 IPC 使用本机套接字和 per-user token；Native Host 的 `allowed_origins` 必须限制为实际扩展 ID。自动化行为应遵守目标网站服务条款。
+- 扩展仅声明当前功能需要的 `activeTab`、`scripting`、`tabs` 和 `nativeMessaging` 权限；不申请 `cookies`、`webRequest`、`debugger`、`history`、`downloads` 或广泛站点访问权限。
+- 扩展代码不调用 Cookie API，不读取 `document.cookie`、`localStorage` 或 `sessionStorage`；Native Host 不访问 Chrome 用户数据目录或浏览器 Cookie 数据库。
+- 扩展代码不包含向第三方发送页面数据的网络请求逻辑；网页自身为正常加载内容而发出的请求不属于扩展的数据上传。
+- Native Messaging Host 安装清单将 `allowed_origins` 限定为安装时传入的单个 Chrome 扩展 ID。安装脚本会校验扩展 ID 格式。
+- 桌面 IPC 使用本机套接字和 per-user token。请勿分享 `%LOCALAPPDATA%\BrowserAssistant\ipc.token`；能读取该 Token 的本机进程可能调用浏览器自动化接口。
+- Native Host 以当前 Windows 用户身份运行，因此它仍拥有该用户的常规文件和进程权限。请只运行可信的桌面客户端和 Host 程序。
+
+更完整的审计范围和安全边界见 [docs/security.md](docs/security.md)。
 
 ## License
 
