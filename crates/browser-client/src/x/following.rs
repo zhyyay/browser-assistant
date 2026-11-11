@@ -18,6 +18,7 @@ impl BrowserClient {
     pub fn get_following(&mut self) -> Result<BrowserResponse> {
         let mut users: HashMap<String, Value> = HashMap::new();
         let mut page = Value::Null;
+        let mut expected_page_url: Option<String> = None;
         let mut errors: Vec<Value> = Vec::new();
         let mut rounds = 0_usize;
         let mut retry_count = 0_usize;
@@ -79,7 +80,22 @@ impl BrowserClient {
                 break;
             }
 
-            page = result.get("page").cloned().unwrap_or(Value::Null);
+            let batch_page = result.get("page").cloned().unwrap_or(Value::Null);
+            let batch_url = batch_page.get("url").and_then(Value::as_str).map(str::to_owned);
+            if let (Some(expected), Some(actual)) = (expected_page_url.as_ref(), batch_url.as_ref()) {
+                if expected != actual {
+                    stop_reason = "page_changed";
+                    errors.push(json!({
+                        "stage": "page_validation",
+                        "round": rounds + 1,
+                        "message": "扫描期间活动页面发生变化，已停止以避免混入其他页面的数据"
+                    }));
+                    break;
+                }
+            } else if expected_page_url.is_none() {
+                expected_page_url = batch_url.clone();
+            }
+            page = batch_page;
             if let Some(batch_errors) = result.get("errors").and_then(Value::as_array) {
                 errors.extend(batch_errors.iter().cloned().map(|mut error| {
                     if let Some(object) = error.as_object_mut() {
