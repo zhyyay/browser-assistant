@@ -28,7 +28,7 @@
 
 ### X Following 互关检测
 
-Rust 客户端调用 `BrowserClient::get_following()` 获取扫描 JSON；调用 `BrowserClient::get_not_following_back()` 则只返回未回关用户数组。实现位于 `crates/browser-client/src/x/following.rs`。扩展弹窗提供「扫描没有回关我的用户」按钮。扫描结果直接返回 JSON，不使用 SQLite。
+Rust 客户端调用 `BrowserClient::get_following()` 获取扫描 JSON；调用 `BrowserClient::get_not_following_back()` 则只返回未回关用户数组，并且仅在 `scan_complete=true` 时返回，避免把部分扫描结果误当成完整名单。实现位于 `crates/browser-client/src/x/following.rs`。扩展弹窗提供「扫描没有回关我的用户」按钮。扫描结果直接返回 JSON，不使用 SQLite。
 
 执行前以及每一轮扫描前都会校验目标仍是原来的 `https://x.com/{用户名}/following` 页面。每轮读取当前 DOM 中全部 `[data-testid="UserCell"]`，不再固定截取前 30 个；按用户名去重，并优先用后续识别出的明确状态更新之前的 unknown 记录。滚动定位到最后一个已加载用户卡片附近，滚动后观察列表 DOM 变化，再进入下一轮，以减少固定滚动距离造成的重复读取。
 
