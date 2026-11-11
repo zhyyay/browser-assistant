@@ -155,6 +155,7 @@ fn spawn_ipc_listener(tx: Sender<HostEvent>, token: String) -> Result<()> {
                     return;
                 }
 
+                let request_id = envelope.request.id.clone();
                 let (reply_tx, reply_rx) = mpsc::channel();
                 if tx.send(HostEvent::DesktopRequest { request: envelope.request, reply: reply_tx }).is_err() {
                     return;
@@ -162,7 +163,10 @@ fn spawn_ipc_listener(tx: Sender<HostEvent>, token: String) -> Result<()> {
                 match reply_rx.recv_timeout(Duration::from_secs(45)) {
                     Ok(value) => { let _ = write_ipc_response(&mut reader, value); }
                     Err(_) => {
-                        let _ = write_ipc_response(&mut reader, response(None, false, None, Some("browser command timed out".into())));
+                        let _ = write_ipc_response(
+                            &mut reader,
+                            response(Some(request_id), false, None, Some("browser command timed out".into())),
+                        );
                     }
                 }
             });
