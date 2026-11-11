@@ -47,3 +47,44 @@ scanButton.addEventListener("click", async () => {
     scanButton.disabled = false;
   }
 });
+
+
+const postText = document.querySelector("#post-text");
+const postButton = document.querySelector("#post-x-tweet");
+postButton.addEventListener("click", async () => {
+  const text = postText.value.trim();
+  if (!text) {
+    status.textContent = "请输入发帖内容";
+    postText.focus();
+    return;
+  }
+  if (!window.confirm("确定将以下内容发布到当前登录的 X 账号吗？\\n\\n" + text)) return;
+
+  postButton.disabled = true;
+  postButton.textContent = "正在发帖…";
+  status.textContent = "正在进入发帖编辑框";
+  output.textContent = "正在随机选择 X 发帖入口，请勿重复点击…";
+  try {
+    const response = await send({
+      type: "page_command",
+      command: "post_x_tweet",
+      params: { text }
+    });
+    if (response?.ok && response.result?.status === "sent") {
+      status.textContent = "发帖成功";
+      postButton.textContent = "再次发帖";
+    } else if (response?.ok && response.result?.status === "confirmation_unknown") {
+      status.textContent = "提交结果待确认";
+      postButton.textContent = "请先检查 X 页面";
+    } else {
+      status.textContent = "发帖失败";
+      postButton.textContent = "重试自动发帖";
+    }
+  } catch (error) {
+    status.textContent = "发帖失败";
+    output.textContent = JSON.stringify({ ok: false, error: error.message || String(error) }, null, 2);
+    postButton.textContent = "重试自动发帖";
+  } finally {
+    postButton.disabled = false;
+  }
+});
