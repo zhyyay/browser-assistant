@@ -209,7 +209,7 @@ fn main() -> Result<()> {
     while let Ok(event) = event_rx.recv() {
         match event {
             HostEvent::DesktopRequest { request, reply } => {
-                if matches!(request.command, BrowserCommand::Ping) {
+                if matches!(&request.command, BrowserCommand::Ping) {
                     let _ = reply.send(response(Some(request.id), true, Some(json!({"message":"pong","host":"browser-assistant"})), None));
                     continue;
                 }
