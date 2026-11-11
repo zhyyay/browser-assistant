@@ -179,34 +179,33 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
             scroller.scrollBy({ top: Math.max(250, Math.floor(clientHeight * 0.65)), behavior: "auto" });
           }
 
+          // Always wait after scrolling: X may only increase scrollHeight after its
+          // lazy-loaded/virtualized list reacts to reaching the current boundary.
+          await new Promise((resolve) => {
+            let finished = false;
+            let quietTimer;
+            const observer = new MutationObserver(() => {
+              clearTimeout(quietTimer);
+              quietTimer = setTimeout(finish, 900);
+            });
+            const timeout = setTimeout(finish, 3500);
+            const finish = () => {
+              if (finished) return;
+              finished = true;
+              clearTimeout(timeout);
+              clearTimeout(quietTimer);
+              observer.disconnect();
+              resolve();
+            };
+            observer.observe(document.querySelector('[data-testid="primaryColumn"]') || document.body, {
+              childList: true, subtree: true, characterData: true
+            });
+            quietTimer = setTimeout(finish, 1800);
+          });
           const scrollTop = scroller.scrollTop;
           const scrollHeight = scroller.scrollHeight;
           const hasMore = scrollTop + clientHeight < scrollHeight - 30;
           const moved = scrollTop > beforeTop + 2 || scrollHeight > beforeHeight + 2;
-          // Wait briefly for X's virtualized list to append/recycle cards before the next read.
-          if (hasMore) {
-            await new Promise((resolve) => {
-              let finished = false;
-              let quietTimer;
-              const observer = new MutationObserver(() => {
-                clearTimeout(quietTimer);
-                quietTimer = setTimeout(finish, 900);
-              });
-              const timeout = setTimeout(finish, 4500);
-              const finish = () => {
-                if (finished) return;
-                finished = true;
-                clearTimeout(timeout);
-                clearTimeout(quietTimer);
-                observer.disconnect();
-                resolve();
-              };
-              observer.observe(document.querySelector('[data-testid="primaryColumn"]') || document.body, {
-                childList: true, subtree: true, characterData: true
-              });
-              quietTimer = setTimeout(finish, 1400);
-            });
-          }
           return {
             success: true,
             page: { url: location.href, username: pageMatch[1], type: "following" },
