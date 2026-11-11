@@ -10,7 +10,13 @@ async function getActiveTab() {
   return tab;
 }
 
-async function performHumanInput(params) {
+async function performHumanInput(params, tabId = null) {
+  if (tabId !== null) {
+    const targetTab = await chrome.tabs.get(tabId);
+    await chrome.windows.update(targetTab.windowId, { focused: true });
+    await chrome.tabs.update(tabId, { active: true });
+    await new Promise((resolve) => setTimeout(resolve, 180));
+  }
   const authorization = await nativeRequest("authorize_command", { action: "human_input" });
   if (!authorization?.ok || !authorization.result?.authorized) {
     throw new Error(authorization?.error || "Rust Host rejected human input");
@@ -32,7 +38,8 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
         return {
           x: rect.left + window.scrollX, y: rect.top + window.scrollY,
           viewport_x: rect.left, viewport_y: rect.top,
-          width: rect.width, height: rect.height
+          width: rect.width, height: rect.height,
+          device_pixel_ratio: window.devicePixelRatio || 1
         };
       };
       switch (command) {
