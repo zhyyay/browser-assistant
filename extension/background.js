@@ -181,7 +181,7 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
         case "get_x_reply_button_rect": {
           if (location.hostname !== "x.com") throw new Error("PAGE_CHANGED: 当前不是 X 页面");
           const postId = String(params.post_id || "");
-          if (!/^\\d{5,30}$/.test(postId)) throw new Error("INVALID_POST_ID: 推文 ID 无效");
+          if (!/^\d{5,30}$/.test(postId)) throw new Error("INVALID_POST_ID: 推文 ID 无效");
           const visible = (element) => {
             if (!(element instanceof HTMLElement)) return false;
             const rect = element.getBoundingClientRect();
@@ -190,7 +190,7 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
           };
           const article = [...document.querySelectorAll('article[data-testid="tweet"]')].find((item) =>
             [...item.querySelectorAll('a[href*="/status/"]')].some((link) =>
-              new URL(link.href, location.origin).pathname.match(/\\/status\\/(\\d+)/)?.[1] === postId
+              new URL(link.href, location.origin).pathname.match(/\/status\/(\d+)/)?.[1] === postId
             )
           );
           if (!article) throw new Error("POST_NOT_FOUND: 当前已加载的时间线中找不到指定推文，请先重新解析时间线");
@@ -211,7 +211,7 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
           };
           const dialog = [...document.querySelectorAll('[role="dialog"]')].find((item) =>
             visible(item) && [...item.querySelectorAll('a[href*="/status/"]')].some((link) =>
-              new URL(link.href, location.origin).pathname.match(/\\/status\\/(\\d+)/)?.[1] === postId
+              new URL(link.href, location.origin).pathname.match(/\/status\/(\d+)/)?.[1] === postId
             )
           );
           if (!dialog) throw new Error("REPLY_DIALOG_NOT_FOUND: 未找到与目标推文对应的回复窗口");
@@ -226,7 +226,7 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
           const postId = String(params.post_id || "");
           const dialog = [...document.querySelectorAll('[role="dialog"]')].find((item) =>
             [...item.querySelectorAll('a[href*="/status/"]')].some((link) =>
-              new URL(link.href, location.origin).pathname.match(/\\/status\\/(\\d+)/)?.[1] === postId
+              new URL(link.href, location.origin).pathname.match(/\/status\/(\d+)/)?.[1] === postId
             )
           );
           const editor = dialog?.querySelector('[data-testid="tweetTextarea_0"], [role="textbox"][data-testid="tweetTextarea_0"]');
@@ -244,7 +244,7 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
           };
           const dialog = [...document.querySelectorAll('[role="dialog"]')].find((item) =>
             [...item.querySelectorAll('a[href*="/status/"]')].some((link) =>
-              new URL(link.href, location.origin).pathname.match(/\\/status\\/(\\d+)/)?.[1] === postId
+              new URL(link.href, location.origin).pathname.match(/\/status\/(\d+)/)?.[1] === postId
             )
           );
           if (!dialog) throw new Error("REPLY_DIALOG_NOT_FOUND: 回复窗口已关闭或目标推文不匹配");
@@ -666,7 +666,7 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
     throw new Error("PAGE_CHANGED: 请先打开 X 时间线页面");
   }
   const postId = String(params.post_id || "").trim();
-  if (!/^\\d{5,30}$/.test(postId)) throw new Error("INVALID_POST_ID: 必须传入解析推文时返回的数字 ID");
+  if (!/^\d{5,30}$/.test(postId)) throw new Error("INVALID_POST_ID: 必须传入解析推文时返回的数字 ID");
   const content = String(params.text ?? "").trim();
   if (!content) throw new Error("INVALID_CONTENT: 回复内容不能为空");
 
@@ -937,7 +937,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         }
         const result = message.command === "post_x_tweet"
           ? await executePostXTweet(message.params || {})
-          : await executeInPage(message.command, message.params || {});
+          : message.command === "reply_to_x_post"
+            ? await executeReplyToXPost(message.params || {})
+            : await executeInPage(message.command, message.params || {});
         sendResponse({ ok: true, result, authorized_by: "rust-native-host" });
         return;
       }
