@@ -354,7 +354,7 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
   if (command === "click" || command === "click_home_link") {
     const x = result.viewport_x + result.width / 2;
     const y = result.viewport_y + result.height / 2;
-    await performHumanInput({ action: "click", x, y });
+    await performHumanInput({ action: "click", x, y, scale: result.device_pixel_ratio || 1 }, tab.id);
     return { clicked: true, url: result.url || tab.url };
   }
   if (command === "type_text") {
@@ -363,19 +363,37 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
       x: result.viewport_x + result.width / 2,
       y: result.viewport_y + result.height / 2,
       text: String(params.text ?? ""),
-      clear_first: true
-    });
+      clear_first: true,
+      scale: result.device_pixel_ratio || 1
+    }, tab.id);
     const verified = await executeInPage("verify_text", { selector: params.selector, text: String(params.text ?? "") }, tab.id);
     if (!verified?.matches) throw new Error("CONTENT_VERIFY_FAILED: 输入后回读校验不一致");
     return { typed: true, cleared_first: true, verified: true };
   }
   if (command === "scroll") {
-    await performHumanInput({ action: "scroll", x: result.x, y: result.y, delta_y: result.delta_y });
+    await performHumanInput({ action: "scroll", x: result.x, y: result.y, delta_y: result.delta_y, scale: 1 }, tab.id);
     return { scrolled: true, delta_y: result.delta_y };
   }
   if (command === "scroll_home_top") {
-    await performHumanInput({ action: "scroll", x: result.x, y: result.y, delta_y: -Math.max(1200, Math.min(result.scroll_y || 4000, 4000)) });
+    await performHumanInput({ action: "scroll", x: result.x, y: result.y, delta_y: -Math.max(1200, Math.min(result.scroll_y || 4000, 4000)), scale: 1 }, tab.id);
     return { scrolled_to_top: true, url: result.url };
+  }
+  if (command === "get_following") {
+    await performHumanInput({
+      action: "scroll", x: result.scroll.x, y: result.scroll.y,
+      delta_y: result.scroll.delta_y, scale: result.scroll.device_pixel_ratio || 1
+    }, tab.id);
+    await new Promise((resolve) => setTimeout(resolve, 700));
+    const state = await executeInPage("get_following_scroll_state", {}, tab.id);
+    result.scroll = {
+      ...result.scroll,
+      top: state.top,
+      height: state.height,
+      viewport_height: state.viewport_height,
+      has_more: state.has_more,
+      moved: state.top > result.scroll.before_top + 2 || state.height > result.scroll.height + 2
+    };
+    return result;
   }
   return result;
 }
