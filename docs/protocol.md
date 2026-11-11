@@ -28,7 +28,7 @@
 
 ### X Following 互关检测
 
-Rust 客户端调用 `BrowserClient::get_following()`。扩展每轮读取当前 Following 页面中最多 30 个 `[data-testid="UserCell"]` 用户卡片，并向下滚动一屏的一部分；Rust 客户端以 2–4 秒间隔调用下一轮，每 10 轮额外休息 15–30 秒。用户名去重，结束后一次性返回 JSON，不使用 SQLite。
+Rust 客户端调用 `BrowserClient::get_following()` 获取完整扫描结果；调用 `BrowserClient::get_not_following_back()` 则只返回未回关用户数组。两者实现位于 `crates/browser-client/src/x/following.rs`，推文解析位于 `crates/browser-client/src/x/posts.rs`，`lib.rs` 只保留通用连接与 IPC 通信。扩展每轮读取当前 Following 页面中最多 30 个 `[data-testid="UserCell"]` 用户卡片，并向下滚动一屏的一部分；Rust 客户端以 2–4 秒间隔调用下一轮，每 10 轮额外休息 15–30 秒。用户名去重，结束后一次性返回 JSON，不使用 SQLite。
 
 扩展弹窗也提供「扫描没有回关我的用户」按钮。点击后由扩展在同一活动标签页分批执行扫描，每批之间等待 3–5 秒，每 8 批额外休息 20–30 秒，最多执行 100 轮；结果中的 `users` 只包含 `follow_status=not_mutual` 的用户，计数仍包含已扫描的互关和 unknown 用户。请保持弹窗打开，且不要在扫描过程中切换/关闭目标页面。
 
