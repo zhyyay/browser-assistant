@@ -137,21 +137,21 @@ fn spawn_ipc_listener(tx: Sender<HostEvent>, token: String) -> Result<()> {
                     Ok(count) if count > 0 && count <= IPC_MAX_LINE_BYTES => match serde_json::from_str(&line) {
                         Ok(value) => value,
                         Err(error) => {
-                            let _ = write_ipc_response(&mut reader, response(None, false, None, Some(format!("invalid IPC JSON: {error}"))));
+                            let _ = write_ipc_response(reader.get_mut(), response(None, false, None, Some(format!("invalid IPC JSON: {error}"))));
                             return;
                         }
                     },
                     Ok(_) => {
-                        let _ = write_ipc_response(&mut reader, response(None, false, None, Some("empty or oversized IPC request".into())));
+                        let _ = write_ipc_response(reader.get_mut(), response(None, false, None, Some("empty or oversized IPC request".into())));
                         return;
                     }
                     Err(error) => {
-                        let _ = write_ipc_response(&mut reader, response(None, false, None, Some(format!("reading IPC request: {error}"))));
+                        let _ = write_ipc_response(reader.get_mut(), response(None, false, None, Some(format!("reading IPC request: {error}"))));
                         return;
                     }
                 };
                 if envelope.token != token {
-                    let _ = write_ipc_response(&mut reader, response(Some(envelope.request.id), false, None, Some("IPC authentication failed".into())));
+                    let _ = write_ipc_response(reader.get_mut(), response(Some(envelope.request.id), false, None, Some("IPC authentication failed".into())));
                     return;
                 }
 
@@ -161,10 +161,10 @@ fn spawn_ipc_listener(tx: Sender<HostEvent>, token: String) -> Result<()> {
                     return;
                 }
                 match reply_rx.recv_timeout(Duration::from_secs(45)) {
-                    Ok(value) => { let _ = write_ipc_response(&mut reader, value); }
+                    Ok(value) => { let _ = write_ipc_response(reader.get_mut(), value); }
                     Err(_) => {
                         let _ = write_ipc_response(
-                            &mut reader,
+                            reader.get_mut(),
                             response(Some(request_id), false, None, Some("browser command timed out".into())),
                         );
                     }
