@@ -131,7 +131,7 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
           if (location.hostname !== "x.com" || !/^\/home\/?$/.test(location.pathname)) {
             throw new Error("NOT_HOME_PAGE: 当前不是 x.com/home 页面");
           }
-          return { scrolled_to_top: false, scroll_y: window.scrollY, x: Math.floor(window.innerWidth / 2), y: Math.floor(window.innerHeight / 2), url: location.href };
+          return { scrolled_to_top: false, scroll_y: window.scrollY, x: Math.floor(window.innerWidth / 2), y: Math.floor(window.innerHeight / 2), device_pixel_ratio: window.devicePixelRatio || 1, url: location.href };
         }
         case "has_x_composer": {
           if (location.hostname !== "x.com") throw new Error("PAGE_CHANGED: 当前不是 X 页面");
@@ -158,7 +158,8 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
             throw new Error("COMPOSER_DISABLED: X 发帖编辑框当前不可用");
           }
           const existingText = compact(editor.innerText || editor.textContent || "", 10000);
-          if (existingText) throw new Error("COMPOSER_NOT_EMPTY: 编辑框已有草稿，拒绝覆盖");
+          // The caller explicitly requested replacement semantics: the native
+          // input path clicks the editor, selects all, clears it, then types.
           return { ...rectOf(editor), existing_text: existingText };
         }
         case "verify_x_composer_text": {
@@ -342,7 +343,7 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
           return { matches: Boolean(element) && actual === expected, actual, expected };
         }
         case "scroll":
-          return { x: Math.floor(window.innerWidth / 2), y: Math.floor(window.innerHeight / 2), delta_y: Number(params.delta_y) || 0, scroll_y: window.scrollY };
+          return { x: Math.floor(window.innerWidth / 2), y: Math.floor(window.innerHeight / 2), delta_y: Number(params.delta_y) || 0, scroll_y: window.scrollY, device_pixel_ratio: window.devicePixelRatio || 1 };
         default:
           throw new Error("unsupported page command: " + command);
       }
@@ -375,7 +376,7 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
     return { scrolled: true, delta_y: result.delta_y };
   }
   if (command === "scroll_home_top") {
-    await performHumanInput({ action: "scroll", x: result.x, y: result.y, delta_y: -Math.max(1200, Math.min(result.scroll_y || 4000, 4000)), scale: 1 }, tab.id);
+    await performHumanInput({ action: "scroll", x: result.x, y: result.y, delta_y: -Math.max(1200, Math.min(result.scroll_y || 4000, 4000)), scale: result.device_pixel_ratio || 1 }, tab.id);
     return { scrolled_to_top: true, url: result.url };
   }
   if (command === "get_following") {
