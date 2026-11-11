@@ -60,3 +60,30 @@ Native Host 新增 `native-host/src/input/` 模块。Windows 下使用 Win32 `Se
 通用 `click` 会移动鼠标后点击；`type_text` 会先点击输入框、全选并删除旧内容，再输入新文本并回读验证；`scroll` 和 Following 列表扫描使用系统鼠标滚轮。自动发帖三种入口均使用系统级输入。输入操作要求目标 Chrome 标签页位于前台；目前系统级输入实现仅支持 Windows，其他平台会明确返回不支持错误。
 
 系统级输入不会读取 Cookie、密码或浏览器凭据。由于操作会真实移动鼠标并向前台窗口发送按键，执行期间请勿移动鼠标或切换到其他窗口；不要在输入框中保留需要保留的草稿，因为输入流程按用户要求会先清空编辑框。
+
+
+## CDP browser input and automation sessions
+
+The extension now uses the Chrome DevTools Protocol through `chrome.debugger` for
+mouse, keyboard and wheel input. These events are dispatched to a specific tab and
+do not move the Windows desktop cursor or type into another foreground application.
+
+- `click`: CDP mouse move/press/release events.
+- `type_text`: CDP mouse focus, Ctrl+A, Backspace, then `Input.insertText`; the
+  page value is read back before the command is considered successful.
+- `scroll`: CDP `Input.dispatchMouseEvent` with `mouseWheel`.
+- `navigate`: Chrome Tabs API navigation; no address-bar interaction is needed.
+- X post publishing creates/reuses a dedicated, non-focused automation window.
+- Following scanning copies the currently selected Following URL into that owned
+  automation window, so the user's original tab is not scrolled.
+- The owned tab is stored in extension local storage and grouped as
+  `浏览器助手自动化`. The user's tabs are not moved or closed.
+
+The extension now requests `debugger`, `storage` and `tabGroups` permissions.
+Chrome may show its debugging notification/banner while a target tab is attached.
+This is a Chrome security indicator, not a failure.
+
+Windows SendInput remains in the Native Host as a legacy fallback implementation,
+but the extension's normal page input path no longer invokes it. CDP behavior on X,
+especially background-tab composition and scrolling, still requires live testing
+against the user's Chrome version and account.
