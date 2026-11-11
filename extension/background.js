@@ -39,6 +39,7 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
           x: rect.left + window.scrollX, y: rect.top + window.scrollY,
           viewport_x: rect.left, viewport_y: rect.top,
           width: rect.width, height: rect.height,
+          viewport_width: window.innerWidth, viewport_height: window.innerHeight,
           device_pixel_ratio: window.devicePixelRatio || 1
         };
       };
@@ -354,20 +355,35 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
   const result = injection?.result ?? null;
   if (!result) return result;
 
-  if (command === "click" || command === "click_home_link") {
-    const x = result.viewport_x + result.width / 2;
-    const y = result.viewport_y + result.height / 2;
-    await performHumanInput({ action: "click", x, y, scale: result.device_pixel_ratio || 1 }, tab.id);
-    return { clicked: true, url: result.url || tab.url };
-  }
-  if (command === "type_text") {
+  if (command === "click" || command === "click_home_link" || command === "type_text") {
+    let target = result;
+    const topOverflow = Math.max(0, -target.viewport_y);
+    const bottomOverflow = Math.max(0, target.viewport_y + target.height - target.viewport_height);
+    if (topOverflow > 0 || bottomOverflow > 0) {
+      const deltaY = topOverflow > 0 ? -(topOverflow + 100) : bottomOverflow + 100;
+      await performHumanInput({
+        action: "scroll",
+        x: Math.floor(target.viewport_width / 2),
+        y: Math.floor(target.viewport_height / 2),
+        delta_y: deltaY,
+        scale: target.device_pixel_ratio || 1
+      }, tab.id);
+      await new Promise((resolve) => setTimeout(resolve, 220));
+      target = await executeInPage("get_element_rect", { selector: params.selector }, tab.id);
+    }
+    if (command !== "type_text") {
+      const x = target.viewport_x + target.width / 2;
+      const y = target.viewport_y + target.height / 2;
+      await performHumanInput({ action: "click", x, y, scale: target.device_pixel_ratio || 1 }, tab.id);
+      return { clicked: true, url: result.url || tab.url };
+    }
     await performHumanInput({
       action: "type_text",
-      x: result.viewport_x + result.width / 2,
-      y: result.viewport_y + result.height / 2,
+      x: target.viewport_x + target.width / 2,
+      y: target.viewport_y + target.height / 2,
       text: String(params.text ?? ""),
       clear_first: true,
-      scale: result.device_pixel_ratio || 1
+      scale: target.device_pixel_ratio || 1
     }, tab.id);
     const verified = await executeInPage("verify_text", { selector: params.selector, text: String(params.text ?? "") }, tab.id);
     if (!verified?.matches) throw new Error("CONTENT_VERIFY_FAILED: 输入后回读校验不一致");
