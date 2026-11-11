@@ -268,50 +268,39 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
           const beforeTop = scroller.scrollTop;
           const beforeHeight = scroller.scrollHeight;
           const clientHeight = scroller.clientHeight || window.innerHeight;
-          if (lastCell) {
-            lastCell.scrollIntoView({ block: "end", behavior: "auto" });
-            if (scroller === document.scrollingElement || scroller === document.documentElement) {
-              window.scrollBy({ top: Math.max(120, Math.floor(clientHeight * 0.55)), behavior: "auto" });
-            }
-          } else {
-            scroller.scrollBy({ top: Math.max(250, Math.floor(clientHeight * 0.65)), behavior: "auto" });
-          }
-
-          // Always wait after scrolling: X may only increase scrollHeight after its
-          // lazy-loaded/virtualized list reacts to reaching the current boundary.
-          await new Promise((resolve) => {
-            let finished = false;
-            let quietTimer;
-            const observer = new MutationObserver(() => {
-              clearTimeout(quietTimer);
-              quietTimer = setTimeout(finish, 900);
-            });
-            const timeout = setTimeout(finish, 3500);
-            const finish = () => {
-              if (finished) return;
-              finished = true;
-              clearTimeout(timeout);
-              clearTimeout(quietTimer);
-              observer.disconnect();
-              resolve();
-            };
-            observer.observe(document.querySelector('[data-testid="primaryColumn"]') || document.body, {
-              childList: true, subtree: true, characterData: true
-            });
-            quietTimer = setTimeout(finish, 1800);
-          });
-          const scrollTop = scroller.scrollTop;
-          const scrollHeight = scroller.scrollHeight;
-          const hasMore = scrollTop + clientHeight < scrollHeight - 30;
-          const moved = scrollTop > beforeTop + 2 || scrollHeight > beforeHeight + 2;
+          const targetRect = (lastCell || scroller).getBoundingClientRect();
           return {
             success: true,
             page: { url: location.href, username: pageMatch[1], type: "following" },
             batch_count: users.length,
             users,
             errors,
-            scroll: { before_top: beforeTop, top: scrollTop, height: scrollHeight, viewport_height: clientHeight, has_more: hasMore, moved }
+            scroll: {
+              before_top: beforeTop, top: beforeTop, height: beforeHeight,
+              viewport_height: clientHeight, has_more: beforeTop + clientHeight < beforeHeight - 30,
+              moved: false,
+              x: Math.max(10, Math.min(window.innerWidth - 10, targetRect.left + targetRect.width / 2)),
+              y: Math.max(10, Math.min(window.innerHeight - 10, targetRect.top + targetRect.height / 2)),
+              delta_y: Math.max(180, Math.floor(clientHeight * 0.55)),
+              device_pixel_ratio: window.devicePixelRatio || 1
+            }
           };
+        }
+        case "get_following_scroll_state": {
+          let scroller = document.scrollingElement || document.documentElement;
+          const cells = [...document.querySelectorAll('[data-testid="UserCell"]')];
+          const lastCell = cells[cells.length - 1];
+          for (let element = lastCell?.parentElement; element && element !== document.body; element = element.parentElement) {
+            const style = getComputedStyle(element);
+            if (/(auto|scroll)/.test(style.overflowY) && element.scrollHeight > element.clientHeight + 80) {
+              scroller = element;
+              break;
+            }
+          }
+          const top = scroller.scrollTop;
+          const height = scroller.scrollHeight;
+          const viewportHeight = scroller.clientHeight || window.innerHeight;
+          return { top, height, viewport_height: viewportHeight, has_more: top + viewportHeight < height - 30 };
         }
         case "get_page_info":
           return { url: location.href, title: document.title, ready_state: document.readyState };
