@@ -1139,8 +1139,14 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
     confirm_timeout_ms: confirmTimeoutMs
   }, tab.id);
   const firstConfirmation = await Promise.race([
-    networkPromise.then((result) => ({ source: "network", result })),
-    pagePromise.then((result) => ({ source: "page", result }))
+    networkPromise.then(
+      (result) => ({ source: "network", result }),
+      (error) => ({ source: "network_error", error })
+    ),
+    pagePromise.then(
+      (result) => ({ source: "page", result }),
+      (error) => ({ source: "page_error", error })
+    )
   ]);
 
   if (firstConfirmation.source === "network" &&
