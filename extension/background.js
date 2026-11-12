@@ -642,20 +642,63 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
             if (!(element instanceof HTMLElement)) return false;
             const rect = element.getBoundingClientRect();
             const style = getComputedStyle(element);
-            return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+            return rect.width > 0 && rect.height > 0 &&
+              style.visibility !== "hidden" && style.display !== "none";
           };
-          while (Date.now() - startedAt < timeoutMs) {
-            const toast = [...document.querySelectorAll('[data-testid="toast"], [role="alert"]')]
-              .filter(visible)
-              .map((node) => compact(node.innerText || node.textContent || "", 500))
-              .find((value) => /回复已发送|你的回复已发送|reply sent|your reply was sent|your reply has been sent|post sent|your post was sent/i.test(value));
-            if (toast) return { status: "sent", submitted: true, confirmed: true, confirmation: toast, post_id: params.post_id };
-            await new Promise((resolve) => setTimeout(resolve, 300));
+          const successPattern = /你的(?:回复|贴|帖子)已发送|回复已发送|已发送.{0,16}查看|reply sent|your reply (?:was|has been) sent|your post (?:was|has been) sent|post sent/i;
+          const readSuccessToast = () => {
+            const candidates = document.querySelectorAll(
+              '[data-testid="toast"], [role="alert"], [data-testid*="toast" i], [aria-live="assertive"], [aria-live="polite"]'
+            );
+            for (const node of candidates) {
+              if (!visible(node)) continue;
+              const value = compact(node.innerText || node.textContent || "", 500);
+              if (value && successPattern.test(value)) return value;
+            }
+            return null;
+          };
+          const immediate = readSuccessToast();
+          if (immediate) {
+            return {
+              status: "sent", submitted: true, confirmed: true,
+              confirmation: immediate, confirmation_method: "dom_snapshot",
+              post_id: params.post_id
+            };
           }
-          return {
-            status: "confirmation_unknown", submitted: true, confirmed: false, post_id: params.post_id,
-            message: "已点击回复提交按钮，但未检测到明确的发送成功提示；请检查目标推文回复，勿直接重复提交"
-          };
+          return await new Promise((resolve) => {
+            let finished = false;
+            let observer = null;
+            const timer = setTimeout(() => finish(null), timeoutMs);
+            const finish = (toast) => {
+              if (finished) return;
+              finished = true;
+              clearTimeout(timer);
+              observer?.disconnect();
+              if (toast) {
+                resolve({
+                  status: "sent", submitted: true, confirmed: true,
+                  confirmation: toast, confirmation_method: "mutation_observer",
+                  post_id: params.post_id
+                });
+              } else {
+                resolve({
+                  status: "confirmation_unknown", submitted: true, confirmed: false,
+                  post_id: params.post_id,
+                  message: "已点击回复提交按钮，但网络响应和页面成功提示均未能明确确认发送结果；请检查目标推文回复，勿直接重复提交"
+                });
+              }
+            };
+            observer = new MutationObserver(() => {
+              const toast = readSuccessToast();
+              if (toast) finish(toast);
+            });
+            observer.observe(document.documentElement, {
+              childList: true, subtree: true, characterData: true
+            });
+            // Close the race between the first snapshot and observer attachment.
+            const afterObserve = readSuccessToast();
+            if (afterObserve) finish(afterObserve);
+          });
         }
         case "wait_x_post_confirmation": {
           const visible = (element) => {
