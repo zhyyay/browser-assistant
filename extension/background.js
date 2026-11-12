@@ -1301,8 +1301,23 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
     throw new Error("CHALLENGE_DETECTED: 页面出现安全验证或账号访问限制，未提交回复");
   }
 
-  // Resolve the exact post by its parsed status ID; never fall back to list index or guessed coordinates.
+  // Resolve the exact post by its own status ID; never fall back to list index or guessed coordinates.
   const replyButton = await executeInPage("get_x_reply_button_rect", { post_id: postId }, tab.id);
+  const resolvedPostId = String(replyButton?.resolved_post_id || replyButton?.post_id || "");
+  if (resolvedPostId !== postId) {
+    throw new Error(
+      "POST_ID_VERIFY_FAILED: 回复按钮定位结果与待回复帖子 ID 不一致；expected=" +
+      postId + "，resolved=" + (resolvedPostId || "missing") + "；拒绝点击"
+    );
+  }
+  interactionTrace.push({
+    stage: "resolve_target_post",
+    elapsed_ms: 0,
+    post_id: postId,
+    resolved_post_id: resolvedPostId,
+    author_username: String(replyButton?.author_username || ""),
+    post_text: String(replyButton?.post_text || "").slice(0, 180)
+  });
   await runPacedInput("open_reply_composer", {
     action: "click",
     x: replyButton.viewport_x + replyButton.width / 2,
