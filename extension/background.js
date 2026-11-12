@@ -66,16 +66,19 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
             new URL(link.href, location.origin).pathname.match(/\/status\/(\d+)/)?.[1] === postId
           );
         const exact = dialogs.find(matchesPost);
-        if (exact) return { dialog: exact, matched_post: true, visible_dialog_count: dialogs.length };
         const composerDialogs = dialogs.filter((dialog) =>
           [...dialog.querySelectorAll(replyEditorSelector)].some(isVisible)
         );
+        if (exact && findReplyEditor(exact)) {
+          return { dialog: exact, matched_post: true, visible_dialog_count: dialogs.length };
+        }
         // X may omit the original status link from its reply dialog. Only use a
         // fallback when there is exactly one visible dialog containing an editor;
         // never guess between multiple dialogs.
         if (composerDialogs.length === 1) {
           return { dialog: composerDialogs[0], matched_post: false, visible_dialog_count: dialogs.length };
         }
+        if (exact) return { dialog: exact, matched_post: true, visible_dialog_count: dialogs.length };
         return { dialog: null, matched_post: false, visible_dialog_count: dialogs.length };
       };
       const findReplyEditor = (dialog) =>
@@ -251,7 +254,7 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
           }
           // Parsed timeline items may be in the DOM but outside the viewport.
           // Bring the exact target button into view before sending CDP coordinates.
-          button.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" });
+          button.scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" });
           await new Promise((resolve) => setTimeout(resolve, 250));
           const rect = rectOf(button);
           if (rect.viewport_x + rect.width <= 0 || rect.viewport_y + rect.height <= 0 ||
