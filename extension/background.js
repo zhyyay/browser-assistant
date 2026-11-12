@@ -377,25 +377,49 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
               return new URL(link.href, location.origin).pathname.match(/\/status\/(\d+)/)?.[1] === postId;
             } catch { return false; }
           });
+        const result = (dialog, editor, strategy) => ({
+          dialog, editor, matched_post: true, match_strategy: strategy,
+          visible_dialog_count: dialogs.length,
+          reply_dialog_count: replyDialogs.length,
+          visible_editor_count: editors.length
+        });
+
+        // Preferred path: a semantic dialog that contains the exact target post.
         const exact = replyDialogs.find(matchesPost);
         if (exact) {
           const editor = findReplyEditor(exact);
-          if (editor) return { dialog: exact, editor, matched_post: true, visible_dialog_count: dialogs.length, reply_dialog_count: replyDialogs.length, visible_editor_count: editors.length };
+          if (editor) return result(exact, editor, "target_post_dialog");
         }
+
+        // X sometimes renders the reply composer in a non-semantic wrapper
+        // (no role=dialog / aria-modal). Walk upward from the sole visible
+        // editor and accept only the nearest ancestor that contains the exact
+        // target status AND its own reply submit control. This avoids treating
+        // the global "What's happening?" composer as a reply editor.
+        if (editors.length === 1) {
+          const editor = editors[0];
+          let ancestor = editor.parentElement;
+          while (ancestor && ancestor !== document.body) {
+            if (matchesPost(ancestor)) {
+              const submit = getReplySubmitButton(ancestor);
+              const label = getSubmitLabel(submit);
+              const isReplySubmit = Boolean(submit) &&
+                (/回复|^reply$/i.test(label) || submit.getAttribute("data-testid") === "tweetButtonInline");
+              if (isReplySubmit) {
+                return result(ancestor, editor, "target_post_ancestor");
+              }
+            }
+            ancestor = ancestor.parentElement;
+          }
+        }
+
         const composerDialogs = replyDialogs
           .map((dialog) => ({ dialog, editor: findReplyEditor(dialog) }))
           .filter((item) => item.editor);
         if (composerDialogs.length === 1) {
-          return { ...composerDialogs[0], matched_post: false, visible_dialog_count: dialogs.length, reply_dialog_count: replyDialogs.length, visible_editor_count: editors.length };
+          return { ...composerDialogs[0], matched_post: false, match_strategy: "single_reply_dialog_unmatched", visible_dialog_count: dialogs.length, reply_dialog_count: replyDialogs.length, visible_editor_count: editors.length };
         }
-        // Inline reply composers are allowed only when uniquely identifiable
-        // inside a tweet article; never mistake a new-post composer for a reply.
-        const inlineEditors = editors.filter((editor) => editor.closest('article[data-testid="tweet"], article'));
-        if (inlineEditors.length === 1 && editors.length === 1) {
-          const article = inlineEditors[0].closest('article[data-testid="tweet"], article');
-          return { dialog: article, editor: inlineEditors[0], matched_post: matchesPost(article), visible_dialog_count: dialogs.length, reply_dialog_count: replyDialogs.length, visible_editor_count: editors.length };
-        }
-        return { dialog: null, editor: null, matched_post: false, visible_dialog_count: dialogs.length, reply_dialog_count: replyDialogs.length, visible_editor_count: editors.length };
+        return { dialog: null, editor: null, matched_post: false, match_strategy: "no_safe_match", visible_dialog_count: dialogs.length, reply_dialog_count: replyDialogs.length, visible_editor_count: editors.length };
       };
       switch (command) {
 
