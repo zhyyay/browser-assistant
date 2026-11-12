@@ -157,16 +157,26 @@ fn spawn_ipc_listener(tx: Sender<HostEvent>, token: String) -> Result<()> {
                 }
 
                 let request_id = envelope.request.id.clone();
-                // X 发帖包含页面输入、提交和成功提示确认，单独给予更长等待时间。
-                // 其他浏览器命令仍保持 45 秒，避免影响普通操作的响应速度。
-                let command_timeout = match &envelope.request.command {
-                    BrowserCommand::PostXTweet { .. } => Duration::from_secs(120),
-                    BrowserCommand::ScrollAutomation { .. } | BrowserCommand::Scroll { .. } => {
-                        // Scroll is a short operation. Return a diagnostic failure promptly
-                        // instead of leaving the desktop worker blocked for the generic 45s.
-                        Duration::from_secs(30)
+                // X 时间线读取、回复和发帖都可能因页面负载、网络响应及提交确认而耗时。
+                // 延长这些命令的等待时间，避免过早把仍在执行的操作判定为超时。
+                // 超时仍只代表结果未知；桌面端必须先核验状态，禁止直接重复发送。
+                let (command_name, command_timeout) = match &envelope.request.command {
+                    BrowserCommand::ReplyToXPost { .. } => {
+                        ("reply_to_x_post", Duration::from_secs(120))
                     }
-                    _ => Duration::from_secs(45),
+                    BrowserCommand::PostXTweet { .. } => {
+                        ("post_x_tweet", Duration::from_secs(120))
+                    }
+                    BrowserCommand::GetXPosts { .. } => {
+                        ("get_x_posts", Duration::from_secs(90))
+                    }
+                    BrowserCommand::ReloadPage => {
+                        ("reload_page", Duration::from_secs(45))
+                    }
+                    BrowserCommand::ScrollAutomation { .. } | BrowserCommand::Scroll { .. } => {
+                        ("scroll", Duration::from_secs(30))
+                    }
+                    _ => ("browser_command", Duration::from_secs(45)),
                 };
                 let (reply_tx, reply_rx) = mpsc::channel();
                 if tx.send(HostEvent::DesktopRequest { request: envelope.request, reply: reply_tx }).is_err() {
@@ -193,7 +203,8 @@ fn spawn_ipc_listener(tx: Sender<HostEvent>, token: String) -> Result<()> {
                         let _ = write_ipc_response(
                             reader.get_mut(),
                             response(Some(request_id), false, None, Some(format!(
-                                "browser command timed out after {} seconds",
+                                "{} timed out after {} seconds",
+                                command_name,
                                 command_timeout.as_secs()
                             ))),
                         );
