@@ -157,15 +157,17 @@ fn spawn_ipc_listener(tx: Sender<HostEvent>, token: String) -> Result<()> {
                 }
 
                 let request_id = envelope.request.id.clone();
-                // X 发帖会经历页面导航、输入、提交和成功提示确认，耗时明显长于普通 DOM 命令。
-                // 只延长发帖命令的等待时间，避免影响其他浏览器操作的响应速度。
-                let command_timeout = if matches!(
-                    &envelope.request.command,
-                    BrowserCommand::PostXTweet { .. }
-                ) {
-                    Duration::from_secs(120)
-                } else {
-                    Duration::from_secs(45)
+                // X 回复/发帖需要定位目标、输入内容、提交并确认成功提示；
+                // 时间线解析也可能因页面负载较高而超过普通 DOM 命令的等待时间。
+                // 超时只表示结果未知，桌面端必须先核实页面状态，不能自动重发。
+                let (command_name, command_timeout) = match &envelope.request.command {
+                    BrowserCommand::ReplyToXPost { .. } => ("reply_to_x_post", Duration::from_secs(120)),
+                    BrowserCommand::PostXTweet { .. } => ("post_x_tweet", Duration::from_secs(120)),
+                    BrowserCommand::GetXPosts { .. } => ("get_x_posts", Duration::from_secs(90)),
+                    BrowserCommand::ScrollAutomation { .. } | BrowserCommand::Scroll { .. } => {
+                        ("scroll", Duration::from_secs(30))
+                    }
+                    _ => ("browser_command", Duration::from_secs(45)),
                 };
                 let (reply_tx, reply_rx) = mpsc::channel();
                 if tx.send(HostEvent::DesktopRequest { request: envelope.request, reply: reply_tx }).is_err() {
@@ -192,7 +194,8 @@ fn spawn_ipc_listener(tx: Sender<HostEvent>, token: String) -> Result<()> {
                         let _ = write_ipc_response(
                             reader.get_mut(),
                             response(Some(request_id), false, None, Some(format!(
-                                "browser command timed out after {} seconds",
+                                "{} timed out after {} seconds",
+                                command_name,
                                 command_timeout.as_secs()
                             ))),
                         );
