@@ -92,7 +92,12 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
         // role=dialog/aria-modal wrapper. Accept only one visible editor on the
         // entire page; never guess when multiple editors are present.
         if (editors.length === 1) {
-          return { dialog: editors[0].closest(replyDialogSelector) || editors[0].parentElement, editor: editors[0], matched_post: false, visible_dialog_count: dialogs.length, visible_editor_count: editors.length };
+          let container = editors[0].closest(replyDialogSelector) || editors[0].parentElement;
+          while (container && container !== document.body &&
+              !container.querySelector('[data-testid="tweetButton"], [data-testid="tweetButtonInline"]')) {
+            container = container.parentElement;
+          }
+          return { dialog: container || editors[0].parentElement, editor: editors[0], matched_post: false, visible_dialog_count: dialogs.length, visible_editor_count: editors.length };
         }
         return { dialog: null, editor: null, matched_post: false, visible_dialog_count: dialogs.length, visible_editor_count: editors.length };
       };
