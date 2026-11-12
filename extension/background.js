@@ -193,7 +193,7 @@ async function waitForAutomationTabReady(tabId, timeoutMs = 30000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const tab = await chrome.tabs.get(tabId);
-    if (tab.status === "complete" && /^https?:\\/\\//i.test(String(tab.url || ""))) {
+    if (tab.status === "complete" && /^https?:\/\//i.test(String(tab.url || ""))) {
       return tab;
     }
     await new Promise((resolve) => setTimeout(resolve, 150));
