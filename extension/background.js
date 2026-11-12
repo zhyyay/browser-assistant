@@ -1116,13 +1116,26 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
     y: submit.viewport_y + submit.height / 2
   }, tab.id);
 
-  const [networkResult, pageResult] = await Promise.all([
+  const [networkSettled, pageSettled] = await Promise.allSettled([
     networkCapture.wait(),
     executeInPage("wait_x_reply_confirmation", {
       post_id: postId,
       confirm_timeout_ms: confirmTimeoutMs
     }, tab.id)
   ]);
+  const networkResult = networkSettled.status === "fulfilled"
+    ? networkSettled.value
+    : {
+        status: "unavailable",
+        reason: "network_capture_failed",
+        error: String(networkSettled.reason?.message || networkSettled.reason).slice(0, 300)
+      };
+  const pageResult = pageSettled.status === "fulfilled"
+    ? pageSettled.value
+    : {
+        status: "confirmation_unknown",
+        message: "页面提示检测失败：" + String(pageSettled.reason?.message || pageSettled.reason).slice(0, 300)
+      };
 
   if (networkResult.status === "confirmed") {
     return {
@@ -1133,6 +1146,7 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
       confirmation_source: "cdp_create_tweet_response",
       network_confirmation: networkResult,
       post_id: postId,
+      message: "已通过 X CreateTweet 网络响应确认回复已发送",
       input_mode: "chrome_devtools_protocol"
     };
   }
