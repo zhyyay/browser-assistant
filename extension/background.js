@@ -53,7 +53,7 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
       switch (command) {
 
         case "get_x_posts": {
-          if (location.hostname !== "x.com" || !/^\\/home\\/?$/.test(location.pathname)) {
+          if (location.hostname !== "x.com" || (location.pathname !== "/home" && location.pathname !== "/home/")) {
             throw new Error("PAGE_CHANGED: 当前页面不是 X 首页时间线");
           }
           const bodyText = compact(document.body?.innerText || "", 16000);
