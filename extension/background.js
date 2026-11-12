@@ -3,6 +3,161 @@ const NATIVE_HOST = "com.zhyyay.browser_assistant";
 let nativePort = null;
 const pending = new Map();
 
+// Capture only the CreateTweet request that contains this exact reply target
+// and text. A generic HTTP 200 is not sufficient: X must return the created
+// tweet ID and no GraphQL errors.
+async function startXReplyNetworkCapture(tabId, postId, content, timeoutMs) {
+  let resolveResult;
+  let settled = false;
+  let timeout = null;
+  const requests = new Map();
+  const resultPromise = new Promise((resolve) => { resolveResult = resolve; });
+
+  const cleanup = () => {
+    if (timeout !== null) clearTimeout(timeout);
+    chrome.debugger.onEvent.removeListener(onEvent);
+    // Network domain is enabled only for this short confirmation window.
+    chrome.debugger.sendCommand({ tabId }, "Network.disable").catch(() => {});
+  };
+
+  const finish = (result) => {
+    if (settled) return;
+    settled = true;
+    cleanup();
+    resolveResult(result);
+  };
+
+  const decodeBody = (body, base64Encoded) => {
+    if (!base64Encoded) return String(body || "");
+    const binary = atob(String(body || ""));
+    const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  };
+
+  const onEvent = (source, method, params = {}) => {
+    if (source.tabId !== tabId || settled) return;
+
+    if (method === "Network.requestWillBeSent") {
+      const request = params.request || {};
+      if (String(request.method || "").toUpperCase() !== "POST" ||
+          !/(?:^|\/)CreateTweet(?:\?|$)/i.test(String(request.url || ""))) return;
+
+      const postData = String(request.postData || "");
+      // X's CreateTweet GraphQL payload includes tweet_text and the reply's
+      // in_reply_to_tweet_id. Require both exact values to avoid unrelated posts.
+      if (!postData.includes(postId) || !postData.includes(content)) return;
+
+      requests.set(params.requestId, {
+        url: String(request.url || ""),
+        status: null,
+        processing: false
+      });
+      return;
+    }
+
+    const tracked = requests.get(params.requestId);
+    if (!tracked) return;
+
+    if (method === "Network.responseReceived") {
+      tracked.status = Number(params.response?.status || 0);
+      tracked.responseUrl = String(params.response?.url || tracked.url);
+      return;
+    }
+
+    if (method === "Network.loadingFailed") {
+      finish({
+        status: "unknown",
+        reason: "request_failed",
+        http_status: tracked.status,
+        error: String(params.errorText || "Network.loadingFailed").slice(0, 300)
+      });
+      return;
+    }
+
+    if (method === "Network.loadingFinished" && !tracked.processing) {
+      tracked.processing = true;
+      (async () => {
+        try {
+          const response = await chrome.debugger.sendCommand(
+            { tabId },
+            "Network.getResponseBody",
+            { requestId: params.requestId }
+          );
+          const bodyText = decodeBody(response?.body, response?.base64Encoded);
+          let payload = null;
+          try { payload = JSON.parse(bodyText); } catch {}
+
+          const createResult = payload?.data?.create_tweet?.tweet_results?.result;
+          const createdTweetId = String(
+            createResult?.rest_id ||
+            createResult?.legacy?.id_str ||
+            createResult?.id_str ||
+            ""
+          );
+          const errors = Array.isArray(payload?.errors) ? payload.errors : [];
+          if (tracked.status >= 200 && tracked.status < 300 &&
+              createdTweetId && errors.length === 0) {
+            finish({
+              status: "confirmed",
+              http_status: tracked.status,
+              created_tweet_id: createdTweetId,
+              operation: "CreateTweet"
+            });
+            return;
+          }
+
+          finish({
+            status: "unknown",
+            reason: errors.length ? "graphql_errors" : "response_not_confirmed",
+            http_status: tracked.status,
+            graphql_errors: errors.slice(0, 3).map((item) =>
+              String(item?.message || item?.code || "GraphQL error").slice(0, 300)
+            ),
+            response_has_created_id: Boolean(createdTweetId)
+          });
+        } catch (error) {
+          finish({
+            status: "unknown",
+            reason: "response_body_unavailable",
+            http_status: tracked.status,
+            error: String(error?.message || error).slice(0, 300)
+          });
+        }
+      })();
+    }
+  };
+
+  chrome.debugger.onEvent.addListener(onEvent);
+  try {
+    // The submit click already attached CDP for input. Reuse that tab session.
+    await chrome.debugger.sendCommand({ tabId }, "Network.enable", {
+      maxTotalBufferSize: 2 * 1024 * 1024,
+      maxResourceBufferSize: 512 * 1024
+    });
+  } catch (error) {
+    chrome.debugger.onEvent.removeListener(onEvent);
+    return {
+      wait: async () => ({
+        status: "unavailable",
+        reason: "network_domain_enable_failed",
+        error: String(error?.message || error).slice(0, 300)
+      }),
+      cancel: () => {}
+    };
+  }
+
+  timeout = setTimeout(() => finish({
+    status: "unknown",
+    reason: requests.size ? "response_timeout" : "matching_request_not_seen",
+    matched_request_count: requests.size
+  }), timeoutMs);
+
+  return {
+    wait: () => resultPromise,
+    cancel: () => finish({ status: "cancelled", reason: "confirmation_cancelled" })
+  };
+}
+
 async function getActiveTab() {
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (!tab?.id || !tab.url || !/^https?:\/\//i.test(tab.url)) {
@@ -946,17 +1101,62 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
   if (!verified?.matches) throw new Error("REPLY_CONTENT_VERIFY_FAILED: 回复内容输入后校验不一致，未提交");
 
   const submit = await executeInPage("get_x_reply_submit_button_rect", { post_id: postId }, tab.id);
+  const confirmTimeoutMs = Math.min(Math.max(Number(params.confirm_timeout_ms) || 8000, 3000), 15000);
+
+  // Arm network observation before the single submit click. Failure to observe
+  // CDP network traffic never causes a second click; Toast remains a fallback.
+  const networkCapture = await startXReplyNetworkCapture(
+    tab.id, postId, content, confirmTimeoutMs
+  );
+
   // Submit once only. An uncertain confirmation must never trigger an automatic retry.
   await performCdpInput({
     action: "click",
     x: submit.viewport_x + submit.width / 2,
     y: submit.viewport_y + submit.height / 2
   }, tab.id);
-  const result = await executeInPage("wait_x_reply_confirmation", {
+
+  const [networkResult, pageResult] = await Promise.all([
+    networkCapture.wait(),
+    executeInPage("wait_x_reply_confirmation", {
+      post_id: postId,
+      confirm_timeout_ms: confirmTimeoutMs
+    }, tab.id)
+  ]);
+
+  if (networkResult.status === "confirmed") {
+    return {
+      ...pageResult,
+      status: "sent",
+      submitted: true,
+      confirmed: true,
+      confirmation_source: "cdp_create_tweet_response",
+      network_confirmation: networkResult,
+      post_id: postId,
+      input_mode: "chrome_devtools_protocol"
+    };
+  }
+
+  if (pageResult?.status === "sent") {
+    return {
+      ...pageResult,
+      confirmation_source: "x_success_toast",
+      network_confirmation: networkResult,
+      input_mode: "chrome_devtools_protocol"
+    };
+  }
+
+  return {
+    ...pageResult,
+    status: "confirmation_unknown",
+    submitted: true,
+    confirmed: false,
+    confirmation_source: null,
+    network_confirmation: networkResult,
     post_id: postId,
-    confirm_timeout_ms: params.confirm_timeout_ms
-  }, tab.id);
-  return { ...result, input_mode: "chrome_devtools_protocol" };
+    message: "已点击回复提交按钮，但网络响应和页面提示均未能明确确认发送结果；请检查目标推文回复，勿直接重复提交",
+    input_mode: "chrome_devtools_protocol"
+  };
 }
 
 async function scanNotFollowingBack() {
