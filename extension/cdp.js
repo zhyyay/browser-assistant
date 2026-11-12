@@ -74,7 +74,11 @@ async function ensureAttached(tabId) {
     return;
   }
 
-  const attachPromise = attachOrRecover(tabId);
+  const attachPromise = withTimeout(
+    attachOrRecover(tabId),
+    4000,
+    `CDP_ATTACH_TIMEOUT: tab_id=${tabId}`
+  );
   attachPromises.set(tabId, attachPromise);
   try {
     await attachPromise;
