@@ -265,7 +265,8 @@ async function getActiveTab() {
 }
 
 async function reloadActiveXHome() {
-  const tab = await getActiveTab();
+  // X 自动化刷新只能操作独立自动化标签页，禁止读取个人窗口的活动标签页。
+  const tab = await requireAutomationTab();
   const url = new URL(tab.url);
   const path = url.pathname.endsWith("/") ? url.pathname.slice(0, -1) : url.pathname;
   if (url.hostname !== "x.com" || path !== "/home") {
@@ -1536,7 +1537,7 @@ function handleNativeMessage(message) {
                 ? await executeAutomationInPage("get_x_posts", message.params || {})
                 : message.command === "scroll_automation"
                   ? await executeAutomationInPage("scroll", message.params || {})
-                  : await executeInPage(message.command, message.params || {});
+                  : await executeAutomationInPage(message.command, message.params || {});
         nativePort?.postMessage({ id: message.id, ok: true, result });
       } catch (error) {
         nativePort?.postMessage({ id: message.id, ok: false, error: error.message || String(error) });
@@ -1611,7 +1612,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
                 ? await executeAutomationInPage("get_x_posts", message.params || {})
                 : message.command === "scroll_automation"
                   ? await executeAutomationInPage("scroll", message.params || {})
-                  : await executeInPage(message.command, message.params || {});
+                  : await executeAutomationInPage(message.command, message.params || {});
         sendResponse({ ok: true, result, authorized_by: "rust-native-host" });
         return;
       }
