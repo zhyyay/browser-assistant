@@ -2,11 +2,15 @@ const attachedTabs = new Set();
 const attachPromises = new Map();
 const operationQueues = new Map();
 const pointerPositions = new Map();
+// A timed-out debugger.sendCommand cannot be cancelled. Keep its promise tracked
+// so a later action never overlaps an earlier command whose result is unknown.
+const commandInFlight = new Map();
 
 chrome.debugger.onDetach.addListener((source) => {
   if (Number.isInteger(source.tabId)) {
     attachedTabs.delete(source.tabId);
     pointerPositions.delete(source.tabId);
+    commandInFlight.delete(source.tabId);
   }
 });
 
@@ -15,6 +19,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   attachPromises.delete(tabId);
   operationQueues.delete(tabId);
   pointerPositions.delete(tabId);
+  commandInFlight.delete(tabId);
 });
 
 function enqueueTabOperation(tabId, operation) {
@@ -90,11 +95,33 @@ async function ensureAttached(tabId) {
 }
 
 async function send(tabId, method, params = {}) {
+  const previousCommand = commandInFlight.get(tabId);
+  if (previousCommand) {
+    throw new Error(
+      `CDP_COMMAND_STILL_PENDING: tab_id=${tabId}; 上一条 CDP 命令尚未返回，拒绝并发发送 ${method}`
+    );
+  }
+
   await ensureAttached(tabId);
+  let commandPromise;
   try {
+    commandPromise = Promise.resolve(
+      chrome.debugger.sendCommand({ tabId }, method, params)
+    );
+    commandInFlight.set(tabId, commandPromise);
+    const clearInFlight = () => {
+      if (commandInFlight.get(tabId) === commandPromise) {
+        commandInFlight.delete(tabId);
+      }
+    };
+    // Keep observing the original promise after the caller's timeout. A timeout
+    // does not cancel Chrome's command, so its eventual settlement must release
+    // the per-tab guard before another CDP command can be dispatched.
+    commandPromise.then(clearInFlight, clearInFlight);
+
     return await withTimeout(
-      chrome.debugger.sendCommand({ tabId }, method, params),
-      4000,
+      commandPromise,
+      15000,
       `CDP_COMMAND_TIMEOUT: tab_id=${tabId}, method=${method}`
     );
   } catch (error) {
@@ -288,9 +315,8 @@ async function dispatchCdpInputUnlocked(tabId, params = {}) {
 export function dispatchCdpInput(tabId, params = {}) {
   // Keep each click/type/scroll sequence atomic per tab. This prevents two
   // concurrent Rust requests from interleaving pointer and keyboard events.
-  const operation = enqueueTabOperation(tabId, () => dispatchCdpInputUnlocked(tabId, params));
-  if (params.action === "scroll") {
-    return withTimeout(operation, 12000, `CDP_SCROLL_TIMEOUT: tab_id=${tabId}`);
-  }
-  return operation;
+  // Each underlying CDP command has its own timeout. Do not race the whole
+  // scroll operation against a shorter outer timeout: that would release the
+  // queue while its mouse-wheel command could still be running in Chrome.
+  return enqueueTabOperation(tabId, () => dispatchCdpInputUnlocked(tabId, params));
 }
