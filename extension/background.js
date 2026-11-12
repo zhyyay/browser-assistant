@@ -1164,7 +1164,7 @@ async function executePostXTweet(params = {}, fixedTabId = null) {
 
 
 async function executeReplyToXPost(params = {}, fixedTabId = null) {
-  const tab = fixedTabId === null ? await getActiveTab() : await chrome.tabs.get(fixedTabId);
+  const tab = fixedTabId === null ? await requireAutomationTab() : await chrome.tabs.get(fixedTabId);
   const initialUrl = new URL(tab.url || "");
   if (initialUrl.hostname !== "x.com") {
     throw new Error("PAGE_CHANGED: 请先打开 X 时间线页面");
