@@ -709,26 +709,61 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
           if (location.hostname !== "x.com") throw new Error("PAGE_CHANGED: 当前不是 X 页面");
           const postId = String(params.post_id || "");
           if (!/^\d{5,30}$/.test(postId)) throw new Error("INVALID_POST_ID: 推文 ID 无效");
-          const article = [...document.querySelectorAll('article[data-testid="tweet"]')].find((item) =>
-            [...item.querySelectorAll('a[href*="/status/"]')].some((link) =>
-              new URL(link.href, location.origin).pathname.match(/\/status\/(\d+)/)?.[1] === postId
-            )
-          );
-          if (!article) throw new Error("POST_NOT_FOUND: 当前已加载的时间线中找不到指定推文，请先重新解析时间线");
+
+          // 只认当前 article 自己的状态永久链接。引用推文/嵌套卡片中的
+          // /status/... 链接不能代表外层帖子的 ID，否则会把回复点错。
+          const ownPostId = (article) => {
+            const ownLinks = [...article.querySelectorAll('a[href*="/status/"]')]
+              .filter((link) => link.closest('article[data-testid="tweet"]') === article);
+            const time = article.querySelector("time");
+            const timeLink = time?.closest('a[href*="/status/"]');
+            const candidates = [
+              ...(timeLink && timeLink.closest('article[data-testid="tweet"]') === article ? [timeLink] : []),
+              ...ownLinks
+            ];
+            const ids = [...new Set(candidates.map((link) => {
+              try { return new URL(link.href, location.origin).pathname.match(/\/status\/(\d+)/)?.[1] || null; }
+              catch { return null; }
+            }).filter(Boolean))];
+            return ids.length === 1 ? ids[0] : null;
+          };
+          const findTargetArticle = () => [...document.querySelectorAll('article[data-testid="tweet"]')]
+            .find((item) => ownPostId(item) === postId) || null;
+
+          let article = findTargetArticle();
+          if (!article) {
+            throw new Error("POST_NOT_FOUND_OR_AMBIGUOUS: 当前时间线中找不到自身状态 ID 完全匹配的推文；拒绝使用引用推文链接或列表序号猜测目标。post_id=" + postId);
+          }
+          // 先滚动整条目标帖子，再重新从 DOM 定位，避免虚拟列表更新后沿用旧节点/旧坐标。
+          article.scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" });
+          await new Promise((resolve) => setTimeout(resolve, 350));
+          article = findTargetArticle();
+          if (!article || ownPostId(article) !== postId) {
+            throw new Error("POST_ID_CHANGED_AFTER_SCROLL: 滚动后无法再次确认目标推文 ID，拒绝点击回复。expected=" + postId);
+          }
           const button = article.querySelector('[data-testid="reply"]');
           if (!button || !isVisible(button) || button.getAttribute("aria-disabled") === "true") {
-            throw new Error("REPLY_BUTTON_NOT_FOUND: 指定推文没有可用的回复按钮");
+            throw new Error("REPLY_BUTTON_NOT_FOUND: 指定推文没有可用的回复按钮；post_id=" + postId);
           }
-          // Parsed timeline items may be in the DOM but outside the viewport.
-          // Bring the exact target button into view before sending CDP coordinates.
-          button.scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" });
-          await new Promise((resolve) => setTimeout(resolve, 250));
           const rect = rectOf(button);
           if (rect.viewport_x + rect.width <= 0 || rect.viewport_y + rect.height <= 0 ||
               rect.viewport_x >= window.innerWidth || rect.viewport_y >= window.innerHeight) {
-            throw new Error("REPLY_BUTTON_OUTSIDE_VIEWPORT: 已定位目标推文，但回复按钮仍不在可点击视口内");
+            throw new Error("REPLY_BUTTON_OUTSIDE_VIEWPORT: 已定位目标推文，但回复按钮仍不在可点击视口内；post_id=" + postId);
           }
-          return { ...rect, post_id: postId };
+          const userName = article.querySelector('[data-testid="User-Name"]');
+          const profileLink = [...(userName?.querySelectorAll('a[href^="/"]') || [])]
+            .find((link) => /^\/[^/]+$/.test(link.getAttribute("href") || ""));
+          const authorUsername = profileLink
+            ? ((profileLink.innerText || "").match(/@([A-Za-z0-9_]+)/)?.[1] || profileLink.getAttribute("href")?.slice(1) || "")
+            : "";
+          const postText = compact(
+            [...article.querySelectorAll('[data-testid="tweetText"]')]
+              .filter((node) => node.closest('article[data-testid="tweet"]') === article)
+              .map((node) => node.innerText || "")
+              .join(" "),
+            500
+          );
+          return { ...rect, post_id: postId, resolved_post_id: ownPostId(article), author_username: authorUsername, post_text: postText };
         }
         case "get_x_reply_editor_rect": {
           if (location.hostname !== "x.com") throw new Error("PAGE_CHANGED: 当前不是 X 页面");
