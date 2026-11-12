@@ -193,8 +193,9 @@ async function openAutomationWindow() {
   let tab = await getAutomationTab();
   const reused = Boolean(tab);
   if (tab) {
-    const url = String(tab.url || "");
-    if (!/^https?:\\/\\/(?:www\\.)?(?:x\\.com|twitter\\.com)(?:\\/|$)/i.test(url)) {
+    const current = new URL(String(tab.url || "https://x.com/home"));
+    const path = current.pathname.replace(/\/$/, "") || "/";
+    if (current.hostname !== "x.com" || path !== "/home") {
       await chrome.tabs.update(tab.id, { url: "https://x.com/home", active: false });
     }
   } else {
