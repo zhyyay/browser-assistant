@@ -11,6 +11,16 @@ async function getActiveTab() {
   return tab;
 }
 
+async function reloadActiveXHome() {
+  const tab = await getActiveTab();
+  const url = new URL(tab.url);
+  if (url.hostname !== "x.com" || !/^\\/home\\/?$/.test(url.pathname)) {
+    throw new Error("PAGE_CHANGED: 仅允许在 X 首页时间线执行刷新");
+  }
+  await chrome.tabs.reload(tab.id);
+  return { reloading: true, tab_id: tab.id, url: tab.url };
+}
+
 async function performCdpInput(params, tabId) {
   return dispatchCdpInput(tabId, params);
 }
@@ -876,15 +886,17 @@ function handleNativeMessage(message) {
     (async () => {
       try {
         const allowed = new Set([
-          "get_page_info", "get_dom_text", "find_elements", "get_x_posts", "post_x_tweet", "reply_to_x_post", "get_following",
+          "get_page_info", "reload_page", "get_dom_text", "find_elements", "get_x_posts", "post_x_tweet", "reply_to_x_post", "get_following",
           "get_element_rect", "click", "type_text", "scroll"
         ]);
         if (!allowed.has(message.command)) throw new Error("unsupported desktop command: " + message.command);
-        const result = message.command === "post_x_tweet"
-          ? await executePostXTweet(message.params || {})
-          : message.command === "reply_to_x_post"
-            ? await executeReplyToXPost(message.params || {})
-            : await executeInPage(message.command, message.params || {});
+        const result = message.command === "reload_page"
+          ? await reloadActiveXHome()
+          : message.command === "post_x_tweet"
+            ? await executePostXTweet(message.params || {})
+            : message.command === "reply_to_x_post"
+              ? await executeReplyToXPost(message.params || {})
+              : await executeInPage(message.command, message.params || {});
         nativePort?.postMessage({ id: message.id, ok: true, result });
       } catch (error) {
         nativePort?.postMessage({ id: message.id, ok: false, error: error.message || String(error) });
