@@ -264,8 +264,7 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
           return { ...rectOf(button), post_id: postId };
         }
         case "wait_x_reply_confirmation": {
-          // 发帖确认允许等待完整的 15 秒；Native Host 对 post_x_tweet 单独提供 120 秒上限。
-          const timeoutMs = Math.min(Math.max(Number(params.confirm_timeout_ms) || 15000, 3000), 15000);
+          const timeoutMs = Math.min(Math.max(Number(params.confirm_timeout_ms) || 8000, 3000), 15000);
           const startedAt = Date.now();
           const visible = (element) => {
             if (!(element instanceof HTMLElement)) return false;
@@ -287,13 +286,14 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
           };
         }
         case "wait_x_post_confirmation": {
+          // 发帖确认允许等待完整的 15 秒；Native Host 对 post_x_tweet 单独提供 120 秒上限。
           const visible = (element) => {
             if (!(element instanceof HTMLElement)) return false;
             const rect = element.getBoundingClientRect();
             const style = getComputedStyle(element);
             return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
           };
-          const timeoutMs = Math.min(Math.max(Number(params.confirm_timeout_ms) || 8000, 3000), 15000);
+          const timeoutMs = Math.min(Math.max(Number(params.confirm_timeout_ms) || 15000, 3000), 15000);
           const startedAt = Date.now();
           while (Date.now() - startedAt < timeoutMs) {
             const toast = [...document.querySelectorAll('[data-testid="toast"], [role="alert"]')]
