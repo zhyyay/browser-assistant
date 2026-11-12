@@ -299,7 +299,16 @@ async function reloadActiveXHome() {
     throw new Error("PAGE_CHANGED: 仅允许在 X 首页时间线执行刷新");
   }
   await chrome.tabs.reload(tab.id);
-  return { reloading: true, tab_id: tab.id, url: tab.url };
+  // ReloadPage 返回前等待独立自动化标签页重新完成加载，避免桌面端
+  // 收到“刷新已触发”后立刻读取仍处于 loading 状态的旧页面。
+  const reloadedTab = await waitForAutomationTabReady(tab.id, 30000);
+  return {
+    reloading: false,
+    reloaded: true,
+    tab_id: reloadedTab.id,
+    url: reloadedTab.url,
+    status: reloadedTab.status
+  };
 }
 
 async function performCdpInput(params, tabId) {
