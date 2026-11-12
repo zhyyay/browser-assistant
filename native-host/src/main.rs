@@ -162,7 +162,22 @@ fn spawn_ipc_listener(tx: Sender<HostEvent>, token: String) -> Result<()> {
                     return;
                 }
                 match reply_rx.recv_timeout(Duration::from_secs(45)) {
-                    Ok(value) => { let _ = write_ipc_response(reader.get_mut(), value); }
+                    Ok(value) => {
+                        let actual_id = value.get("id").and_then(Value::as_str);
+                        if actual_id != Some(request_id.as_str()) {
+                            let error = format!(
+                                "Native Host correlation failure: request_id={}, extension_response_id={}",
+                                request_id,
+                                actual_id.unwrap_or("<missing>")
+                            );
+                            let _ = write_ipc_response(
+                                reader.get_mut(),
+                                response(Some(request_id), false, None, Some(error)),
+                            );
+                        } else {
+                            let _ = write_ipc_response(reader.get_mut(), value);
+                        }
+                    }
                     Err(_) => {
                         let _ = write_ipc_response(
                             reader.get_mut(),
@@ -239,12 +254,23 @@ fn main() -> Result<()> {
             }
             HostEvent::ExtensionMessage(message) => {
                 let id = message.get("id").and_then(Value::as_str).map(str::to_owned);
-                if let Some(id) = id {
-                    if let Some(waiter) = pending.remove(&id) {
+                if let Some(id) = id.as_deref() {
+                    if let Some(waiter) = pending.remove(id) {
                         let _ = waiter.send(message);
                         continue;
                     }
                 }
+
+                // Extension command responses must never be treated as new host commands.
+                // Doing so can emit an unrelated Native Messaging frame and hide stale IDs.
+                if message.get("ok").and_then(Value::as_bool).is_some() {
+                    eprintln!(
+                        "[browser-assistant-host] ignored unmatched extension response: id={}",
+                        id.as_deref().unwrap_or("<missing>")
+                    );
+                    continue;
+                }
+
                 write_message(&mut output, &handle_message(message))?;
             }
             HostEvent::ExtensionDisconnected => {
