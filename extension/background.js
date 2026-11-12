@@ -59,6 +59,9 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
           if (/rate limit exceeded|too many requests|try again later|请求过于频繁|操作过于频繁|暂时限制了部分功能/i.test(bodyText)) {
             throw new Error("RATE_LIMITED: 检测到 X 限流提示，已停止扫描");
           }
+          if (/出错了\\s*[。.]?\\s*请尝试重新加载|请尝试重新加载|something went wrong.{0,40}reload|try reloading/i.test(bodyText)) {
+            throw new Error("TIMELINE_RELOAD_REQUIRED: X 时间线出现“出错了，请尝试重新加载”，需要刷新恢复");
+          }
           if (/你已达到每日帖子上限|已达到每日发帖上限|每日帖子上限|daily post limit|you.?ve reached your daily post limit|subscribe to (?:x )?premium|订阅\s*(?:x\\s*)?premium|升级到\s*(?:x\\s*)?premium/i.test(bodyText)) {
             throw new Error("GLOBAL_STOP: DAILY_POST_LIMIT_REACHED: 检测到 X 每日帖子上限或 Premium 提示，已停止全部自动化");
           }
