@@ -1,0 +1,9 @@
+{
+    "path":  "D:\\rust\\browser-assistant\\target\\release\\browser-assistant-host.exe",
+    "description":  "Browser Assistant Rust Native Messaging Host",
+    "name":  "com.zhyyay.browser_assistant",
+    "allowed_origins":  [
+                            "chrome-extension://pnmihlnekookdppgjbokjbcoecjakfkc/"
+                        ],
+    "type":  "stdio"
+}
