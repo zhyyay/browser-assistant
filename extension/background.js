@@ -66,42 +66,120 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
         '[role="dialog"], [aria-modal="true"], [data-testid="sheetDialog"], [data-testid*="modal" i]';
       const findReplyEditor = (dialog) =>
         [...dialog.querySelectorAll(replyEditorSelector)].find(isVisible) || null;
+      const getReplySubmitButton = (container) =>
+        [...container.querySelectorAll('[data-testid="tweetButton"], [data-testid="tweetButtonInline"]')]
+          .find(isVisible) || null;
+      const getSubmitLabel = (button) => compact(
+        button?.innerText || button?.textContent || button?.getAttribute("aria-label") || button?.getAttribute("title") || "",
+        100
+      );
+      const isReplyDialog = (dialog, postId = "") => {
+        const button = getReplySubmitButton(dialog);
+        const label = getSubmitLabel(button);
+        if (/^(回复|reply)$/i.test(label) || /回复|reply/i.test(label)) return true;
+        // Some X variants omit visible button text. In that case only accept
+        // a modal that contains the exact target status and a visible editor.
+        const containsTarget = postId && [...dialog.querySelectorAll('a[href*="/status/"]')].some((link) => {
+          try {
+            return new URL(link.href, location.origin).pathname.match(/\/status\/(\d+)/)?.[1] === postId;
+          } catch { return false; }
+        });
+        return Boolean(containsTarget && findReplyEditor(dialog));
+      };
       const findReplyDialog = (postId) => {
         const dialogs = [...document.querySelectorAll(replyDialogSelector)].filter(isVisible);
         const editors = [...document.querySelectorAll(replyEditorSelector)].filter(isVisible);
+        const replyDialogs = dialogs.filter((dialog) => isReplyDialog(dialog, postId));
         const matchesPost = (container) =>
           [...container.querySelectorAll('a[href*="/status/"]')].some((link) => {
             try {
               return new URL(link.href, location.origin).pathname.match(/\/status\/(\d+)/)?.[1] === postId;
-            } catch {
-              return false;
-            }
+            } catch { return false; }
           });
-        const exact = dialogs.find(matchesPost);
+        const exact = replyDialogs.find(matchesPost);
         if (exact) {
           const editor = findReplyEditor(exact);
-          if (editor) return { dialog: exact, editor, matched_post: true, visible_dialog_count: dialogs.length, visible_editor_count: editors.length };
+          if (editor) return { dialog: exact, editor, matched_post: true, visible_dialog_count: dialogs.length, reply_dialog_count: replyDialogs.length, visible_editor_count: editors.length };
         }
-        const composerDialogs = dialogs
+        const composerDialogs = replyDialogs
           .map((dialog) => ({ dialog, editor: findReplyEditor(dialog) }))
           .filter((item) => item.editor);
         if (composerDialogs.length === 1) {
-          return { ...composerDialogs[0], matched_post: false, visible_dialog_count: dialogs.length, visible_editor_count: editors.length };
+          return { ...composerDialogs[0], matched_post: false, visible_dialog_count: dialogs.length, reply_dialog_count: replyDialogs.length, visible_editor_count: editors.length };
         }
-        // Some X modal variants expose a contenteditable composer without a
-        // role=dialog/aria-modal wrapper. Accept only one visible editor on the
-        // entire page; never guess when multiple editors are present.
-        if (editors.length === 1) {
-          let container = editors[0].closest(replyDialogSelector) || editors[0].parentElement;
-          while (container && container !== document.body &&
-              !container.querySelector('[data-testid="tweetButton"], [data-testid="tweetButtonInline"]')) {
-            container = container.parentElement;
-          }
-          return { dialog: container || editors[0].parentElement, editor: editors[0], matched_post: false, visible_dialog_count: dialogs.length, visible_editor_count: editors.length };
+        // Inline reply composers are allowed only when uniquely identifiable
+        // inside a tweet article; never mistake a new-post composer for a reply.
+        const inlineEditors = editors.filter((editor) => editor.closest('article[data-testid="tweet"], article'));
+        if (inlineEditors.length === 1 && editors.length === 1) {
+          const article = inlineEditors[0].closest('article[data-testid="tweet"], article');
+          return { dialog: article, editor: inlineEditors[0], matched_post: matchesPost(article), visible_dialog_count: dialogs.length, reply_dialog_count: replyDialogs.length, visible_editor_count: editors.length };
         }
-        return { dialog: null, editor: null, matched_post: false, visible_dialog_count: dialogs.length, visible_editor_count: editors.length };
+        return { dialog: null, editor: null, matched_post: false, visible_dialog_count: dialogs.length, reply_dialog_count: replyDialogs.length, visible_editor_count: editors.length };
       };
       switch (command) {
+
+        case "inspect_x_reply_dialog": {
+          if (location.hostname !== "x.com") throw new Error("PAGE_CHANGED: 当前不是 X 页面");
+          const postId = String(params.post_id || "");
+          const located = findReplyDialog(postId);
+          const replyDialogs = [...document.querySelectorAll(replyDialogSelector)]
+            .filter(isVisible)
+            .filter((dialog) => isReplyDialog(dialog, postId));
+          const detail = replyDialogs.map((dialog) => {
+            const editor = findReplyEditor(dialog);
+            const submit = getReplySubmitButton(dialog);
+            return {
+              has_editor: Boolean(editor),
+              editor_testid: editor?.getAttribute("data-testid") || null,
+              submit_label: getSubmitLabel(submit),
+              has_close_button: Boolean(dialog.querySelector('[data-testid="app-bar-close"], [aria-label="Close"], [aria-label="关闭"]')),
+              contains_target_post: [...dialog.querySelectorAll('a[href*="/status/"]')].some((link) => {
+                try { return new URL(link.href, location.origin).pathname.match(/\/status\/(\d+)/)?.[1] === postId; }
+                catch { return false; }
+              })
+            };
+          });
+          return {
+            found: replyDialogs.length > 0 || Boolean(located.editor),
+            editor_found: Boolean(located.editor),
+            matched_post: Boolean(located.matched_post),
+            visible_dialog_count: located.visible_dialog_count,
+            reply_dialog_count: replyDialogs.length,
+            visible_editor_count: located.visible_editor_count,
+            dialogs: detail
+          };
+        }
+
+        case "close_x_reply_dialog": {
+          if (location.hostname !== "x.com") throw new Error("PAGE_CHANGED: 当前不是 X 页面");
+          const postId = String(params.post_id || "");
+          const dialogs = [...document.querySelectorAll(replyDialogSelector)]
+            .filter(isVisible)
+            .filter((dialog) => isReplyDialog(dialog, postId));
+          if (!dialogs.length) return { closed: true, already_closed: true, closed_count: 0 };
+          // Close only a reply modal. Never close a compose/post dialog.
+          const target = dialogs.find((dialog) => postId && [...dialog.querySelectorAll('a[href*="/status/"]')].some((link) => {
+            try { return new URL(link.href, location.origin).pathname.match(/\/status\/(\d+)/)?.[1] === postId; }
+            catch { return false; }
+          })) || (dialogs.length === 1 ? dialogs[0] : null);
+          if (!target) return { closed: false, reason: "MULTIPLE_REPLY_DIALOGS", count: dialogs.length };
+          const closeButton = target.querySelector('[data-testid="app-bar-close"], [aria-label="Close"], [aria-label="关闭"]');
+          if (closeButton && isVisible(closeButton)) {
+            closeButton.click();
+          } else {
+            const keyTarget = target.querySelector('[data-testid="tweetTextarea_0"], [role="textbox"]') || target;
+            keyTarget.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true }));
+            document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true }));
+          }
+          const deadline = Date.now() + 1500;
+          while (Date.now() < deadline) {
+            if (!target.isConnected || !isVisible(target)) {
+              return { closed: true, already_closed: false, closed_count: 1, method: closeButton ? "close_button" : "escape" };
+            }
+            await new Promise((resolve) => setTimeout(resolve, 100));
+          }
+          return { closed: false, reason: "CLOSE_NOT_CONFIRMED", method: closeButton ? "close_button" : "escape" };
+        }
 
         case "get_x_posts": {
           if (location.hostname !== "x.com" || (location.pathname !== "/home" && location.pathname !== "/home/")) {
@@ -825,7 +903,20 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
       await new Promise((resolve) => setTimeout(resolve, 250));
     }
   }
-  if (!editor) throw new Error("REPLY_EDITOR_TIMEOUT: 等待目标推文回复窗口超时: " + String(lastError?.message || ""));
+  if (!editor) {
+    let closeResult = null;
+    try {
+      closeResult = await executeInPage("close_x_reply_dialog", { post_id: postId }, tab.id);
+    } catch (closeError) {
+      closeResult = { closed: false, error: String(closeError?.message || closeError) };
+    }
+    const diagnostic = String(lastError?.message || lastError || "unknown");
+    throw new Error(
+      "REPLY_EDITOR_TIMEOUT: 等待目标推文回复编辑框超时；" +
+      "diagnostic=" + diagnostic +
+      "；close_result=" + JSON.stringify(closeResult)
+    );
+  }
 
   await performCdpInput({
     action: "type_text",
