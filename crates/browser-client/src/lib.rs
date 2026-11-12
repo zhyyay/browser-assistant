@@ -64,7 +64,12 @@ impl BrowserClient {
         }
         let response: BrowserResponse = serde_json::from_str(&line).context("decoding IPC response")?;
         if response.id.as_deref() != Some(id.as_str()) {
-            bail!("IPC response id does not match the request");
+            let actual_id = response.id.as_deref().unwrap_or("<missing>");
+            let response_json = serde_json::to_string(&response)
+                .unwrap_or_else(|_| "<response serialization failed>".to_string());
+            bail!(
+                "IPC response id mismatch: request_id={id}, response_id={actual_id}, response={response_json}"
+            );
         }
         // The host currently serves one request per connection. Reconnect on the next execute().
         drop(reader);
