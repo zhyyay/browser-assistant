@@ -18,6 +18,7 @@ pub enum BrowserCommand {
     Click { selector: String },
     TypeText { selector: String, text: String },
     Scroll { delta_y: i32 },
+    ScrollAutomation { delta_y: i32 },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
