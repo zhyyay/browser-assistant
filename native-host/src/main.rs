@@ -157,11 +157,21 @@ fn spawn_ipc_listener(tx: Sender<HostEvent>, token: String) -> Result<()> {
                 }
 
                 let request_id = envelope.request.id.clone();
+                // X 发帖会经历页面导航、输入、提交和成功提示确认，耗时明显长于普通 DOM 命令。
+                // 只延长发帖命令的等待时间，避免影响其他浏览器操作的响应速度。
+                let command_timeout = if matches!(
+                    &envelope.request.command,
+                    BrowserCommand::PostXTweet { .. }
+                ) {
+                    Duration::from_secs(120)
+                } else {
+                    Duration::from_secs(45)
+                };
                 let (reply_tx, reply_rx) = mpsc::channel();
                 if tx.send(HostEvent::DesktopRequest { request: envelope.request, reply: reply_tx }).is_err() {
                     return;
                 }
-                match reply_rx.recv_timeout(Duration::from_secs(45)) {
+                match reply_rx.recv_timeout(command_timeout) {
                     Ok(value) => {
                         let actual_id = value.get("id").and_then(Value::as_str);
                         if actual_id != Some(request_id.as_str()) {
@@ -181,7 +191,10 @@ fn spawn_ipc_listener(tx: Sender<HostEvent>, token: String) -> Result<()> {
                     Err(_) => {
                         let _ = write_ipc_response(
                             reader.get_mut(),
-                            response(Some(request_id), false, None, Some("browser command timed out".into())),
+                            response(Some(request_id), false, None, Some(format!(
+                                "browser command timed out after {} seconds",
+                                command_timeout.as_secs()
+                            ))),
                         );
                     }
                 }
