@@ -175,8 +175,53 @@ async function startXReplyNetworkCapture(tabId, postId, content, timeoutMs) {
   };
 }
 
+const AUTOMATION_TAB_STORAGE_KEY = "xAutomationTabId";
+
+async function getAutomationTab() {
+  const stored = await chrome.storage.local.get(AUTOMATION_TAB_STORAGE_KEY);
+  const tabId = Number(stored?.[AUTOMATION_TAB_STORAGE_KEY]);
+  if (!Number.isInteger(tabId) || tabId <= 0) return null;
+  try {
+    return await chrome.tabs.get(tabId);
+  } catch {
+    await chrome.storage.local.remove(AUTOMATION_TAB_STORAGE_KEY);
+    return null;
+  }
+}
+
+async function openAutomationWindow() {
+  let tab = await getAutomationTab();
+  const reused = Boolean(tab);
+  if (tab) {
+    const url = String(tab.url || "");
+    if (!/^https?:\\/\\/(?:www\\.)?(?:x\\.com|twitter\\.com)(?:\\/|$)/i.test(url)) {
+      await chrome.tabs.update(tab.id, { url: "https://x.com/home", active: false });
+    }
+  } else {
+    const win = await chrome.windows.create({
+      url: "https://x.com/home",
+      focused: false,
+      type: "normal"
+    });
+    tab = win?.tabs?.[0] || null;
+    if (!tab?.id) throw new Error("AUTOMATION_WINDOW_CREATE_FAILED: Chrome 未返回自动化窗口标签页");
+    await chrome.storage.local.set({ [AUTOMATION_TAB_STORAGE_KEY]: tab.id });
+  }
+  return {
+    opened: true,
+    reused,
+    tab_id: tab.id,
+    window_id: tab.windowId,
+    focused: false,
+    url: tab.url || "https://x.com/home"
+  };
+}
+
 async function getActiveTab() {
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  const automationTab = await getAutomationTab();
+  const [tab] = automationTab
+    ? [automationTab]
+    : await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (!tab?.id || !tab.url || !/^https?:\/\//i.test(tab.url)) {
     const tabId = Number.isInteger(tab?.id) ? tab.id : "无";
     const title = String(tab?.title || "无").replace(/\s+/g, " ").slice(0, 120);
@@ -1434,12 +1479,14 @@ function handleNativeMessage(message) {
     (async () => {
       try {
         const allowed = new Set([
-          "get_page_info", "reload_page", "get_dom_text", "find_elements", "get_x_posts", "post_x_tweet", "reply_to_x_post", "get_following",
+          "open_automation_window", "get_page_info", "reload_page", "get_dom_text", "find_elements", "get_x_posts", "post_x_tweet", "reply_to_x_post", "get_following",
           "get_element_rect", "click", "type_text", "scroll"
         ]);
         if (!allowed.has(message.command)) throw new Error("unsupported desktop command: " + message.command);
-        const result = message.command === "reload_page"
-          ? await reloadActiveXHome()
+        const result = message.command === "open_automation_window"
+          ? await openAutomationWindow()
+          : message.command === "reload_page"
+            ? await reloadActiveXHome()
           : message.command === "post_x_tweet"
             ? await executePostXTweet(message.params || {})
             : message.command === "reply_to_x_post"
@@ -1505,8 +1552,10 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         if (!authorization?.ok || !authorization.result?.authorized) {
           throw new Error(authorization?.error || "Rust Host rejected the command");
         }
-        const result = message.command === "reload_page"
-          ? await reloadActiveXHome()
+        const result = message.command === "open_automation_window"
+          ? await openAutomationWindow()
+          : message.command === "reload_page"
+            ? await reloadActiveXHome()
           : message.command === "post_x_tweet"
             ? await executePostXTweet(message.params || {})
             : message.command === "reply_to_x_post"
