@@ -110,6 +110,40 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
           }
           const limit = Math.min(Math.max(Number(params.limit) || 20, 1), 100);
           const articles = [...document.querySelectorAll('article[data-testid="tweet"]')].slice(0, limit);
+          // Exclude promoted content and replies addressed to another account
+          // from the candidate JSON consumed by the automatic-reply workflow.
+          const classifyExcludedPost = (article) => {
+            const articleText = compact(article.innerText || "", 5000);
+            const tweetTextNode = article.querySelector('[data-testid="tweetText"]');
+            const tweetText = compact(tweetTextNode?.innerText || "", 10000);
+            const tweetStart = tweetTextNode && articleText
+              ? articleText.indexOf(tweetText)
+              : -1;
+            const headerText = tweetStart >= 0 ? articleText.slice(0, tweetStart) : "";
+            const socialContext = compact(
+              [...article.querySelectorAll('[data-testid="socialContext"]')]
+                .map((node) => node.innerText || "")
+                .join(" "),
+              1000
+            );
+            const disclosureText = [
+              articleText,
+              ...[...article.querySelectorAll('[aria-label], [data-testid]')]
+                .map((node) => node.getAttribute("aria-label") || node.getAttribute("data-testid") || "")
+            ].join(" ");
+            const isAd = /\\b(?:promoted|sponsored)\\b|推广内容|推广\s*|广告\s*|赞助内容/i.test(disclosureText);
+            const replyContext = socialContext + " " + headerText;
+            const isDirectedReply = /(?:replying\\s+to|回复给|回复)\\s*@([A-Za-z0-9_]{1,15})/i.test(replyContext);
+            return isAd ? "advertisement" : isDirectedReply ? "directed_reply" : null;
+          };
+          const eligibleArticles = articles
+            .map((article, index) => ({ article, index, excludedReason: classifyExcludedPost(article) }))
+            .filter((item) => !item.excludedReason);
+          const excludedCounts = articles.reduce((counts, article) => {
+            const reason = classifyExcludedPost(article);
+            if (reason) counts[reason] = (counts[reason] || 0) + 1;
+            return counts;
+          }, {});
           const parseMetric = (value) => {
             const raw = compact(value, 80);
             if (!raw) return { raw: null, value: null };
@@ -121,7 +155,7 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
             const multiplier = ({ "万": 10000, "亿": 100000000, "千": 1000, "k": 1000, "m": 1000000, "b": 1000000000 })[suffix] || 1;
             return { raw, value: Number.isFinite(number) ? Math.round(number * multiplier) : null };
           };
-          const posts = articles.map((article, index) => {
+          const posts = eligibleArticles.map(({ article, index }) => {
             const userName = article.querySelector('[data-testid="User-Name"]');
             const authorLinks = [...(userName?.querySelectorAll('a[href^="/"]') || [])]
               .filter((link) => /^\/[^/]+$/.test(link.getAttribute("href") || ""));
@@ -172,6 +206,8 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
           return {
             page: { url: location.href, title: document.title },
             count: posts.length,
+            scanned_count: articles.length,
+            excluded_counts: excludedCounts,
             requested_limit: limit,
             posts
           };
