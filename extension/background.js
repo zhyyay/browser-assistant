@@ -1052,6 +1052,19 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
   const content = String(params.text ?? "").trim();
   if (!content) throw new Error("INVALID_CONTENT: 回复内容不能为空");
 
+  const interactionTrace = [];
+  const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const runPacedInput = async (stage, input) => {
+    const started = performance.now();
+    const result = await performCdpInput(input, tab.id);
+    interactionTrace.push({
+      stage,
+      elapsed_ms: Math.round(performance.now() - started),
+      ...result
+    });
+    return result;
+  };
+
   const pageState = await executeInPage("get_dom_text", { max_chars: 16000 }, tab.id);
   if (/rate limit exceeded|too many requests|try again later|请求过于频繁|操作过于频繁|暂时限制了部分功能/i.test(pageState?.text || "")) {
     throw new Error("RATE_LIMITED: 检测到 X 限流提示，未提交回复");
@@ -1065,12 +1078,13 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
 
   // Resolve the exact post by its parsed status ID; never fall back to list index or guessed coordinates.
   const replyButton = await executeInPage("get_x_reply_button_rect", { post_id: postId }, tab.id);
-  await performCdpInput({
+  await runPacedInput("open_reply_composer", {
     action: "click",
     x: replyButton.viewport_x + replyButton.width / 2,
     y: replyButton.viewport_y + replyButton.height / 2,
     clear_first: false
-  }, tab.id);
+  });
+  await pause(350);
 
   let editor = null;
   let lastError = null;
@@ -1107,13 +1121,14 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
     );
   }
 
-  await performCdpInput({
+  await pause(250);
+  await runPacedInput("type_reply_text", {
     action: "type_text",
     x: editor.viewport_x + editor.width / 2,
     y: editor.viewport_y + editor.height / 2,
     text: content,
     clear_first: true
-  }, tab.id);
+  });
   const verified = await executeInPage("verify_x_reply_text", { post_id: postId, text: content }, tab.id);
   if (!verified?.matches) throw new Error("REPLY_CONTENT_VERIFY_FAILED: 回复内容输入后校验不一致，未提交");
 
@@ -1126,12 +1141,14 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
     tab.id, postId, content, confirmTimeoutMs
   );
 
+  // Let the verified draft settle before the single submit action.
+  await pause(500);
   // Submit once only. An uncertain confirmation must never trigger an automatic retry.
-  await performCdpInput({
+  await runPacedInput("submit_reply", {
     action: "click",
     x: submit.viewport_x + submit.width / 2,
     y: submit.viewport_y + submit.height / 2
-  }, tab.id);
+  });
 
   const networkPromise = networkCapture.wait();
   const pagePromise = executeInPage("wait_x_reply_confirmation", {
@@ -1160,7 +1177,8 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
       post_id: postId,
       created_tweet_id: firstConfirmation.result.created_tweet_id,
       message: "已通过 X CreateTweet 网络响应确认回复已发送",
-      input_mode: "chrome_devtools_protocol"
+      interaction_trace: interactionTrace,
+      input_mode: "chrome_devtools_protocol_paced"
     };
   }
 
@@ -1171,7 +1189,8 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
       ...firstConfirmation.result,
       confirmation_source: "x_success_toast",
       network_confirmation: { status: "not_needed_to_confirm" },
-      input_mode: "chrome_devtools_protocol"
+      interaction_trace: interactionTrace,
+      input_mode: "chrome_devtools_protocol_paced"
     };
   }
 
@@ -1203,7 +1222,8 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
       post_id: postId,
       created_tweet_id: networkResult.created_tweet_id,
       message: "已通过 X CreateTweet 网络响应确认回复已发送",
-      input_mode: "chrome_devtools_protocol"
+      interaction_trace: interactionTrace,
+      input_mode: "chrome_devtools_protocol_paced"
     };
   }
 
@@ -1212,7 +1232,8 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
       ...pageResult,
       confirmation_source: "x_success_toast",
       network_confirmation: networkResult,
-      input_mode: "chrome_devtools_protocol"
+      interaction_trace: interactionTrace,
+      input_mode: "chrome_devtools_protocol_paced"
     };
   }
 
@@ -1225,7 +1246,8 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
     network_confirmation: networkResult,
     post_id: postId,
     message: "已点击回复提交按钮，但网络响应和页面提示均未能明确确认发送结果；请检查目标推文回复，勿直接重复提交",
-    input_mode: "chrome_devtools_protocol"
+    interaction_trace: interactionTrace,
+    input_mode: "chrome_devtools_protocol_paced"
   };
 }
 
