@@ -76,7 +76,10 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
       const isReplyDialog = (dialog, postId = "") => {
         const button = getReplySubmitButton(dialog);
         const label = getSubmitLabel(button);
-        if (/^(回复|reply)$/i.test(label) || /回复|reply/i.test(label)) return true;
+        if (button && label) {
+          // An explicit "Post/发帖" action is never a reply dialog.
+          return /回复|^reply$/i.test(label);
+        }
         // Some X variants omit visible button text. In that case only accept
         // a modal that contains the exact target status and a visible editor.
         const containsTarget = postId && [...dialog.querySelectorAll('a[href*="/status/"]')].some((link) => {
@@ -891,17 +894,22 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
 
   let editor = null;
   let lastError = null;
+  let lastDialogState = null;
   const editorDeadline = Date.now() + 15000;
   while (Date.now() < editorDeadline) {
     try {
-      editor = await executeInPage("get_x_reply_editor_rect", { post_id: postId }, tab.id);
-      break;
+      lastDialogState = await executeInPage("inspect_x_reply_dialog", { post_id: postId }, tab.id);
+      if (lastDialogState?.editor_found) {
+        editor = await executeInPage("get_x_reply_editor_rect", { post_id: postId }, tab.id);
+        break;
+      }
     } catch (error) {
       lastError = error;
-      if (!String(error?.message || error).includes("REPLY_DIALOG_NOT_FOUND") &&
-          !String(error?.message || error).includes("REPLY_EDITOR_NOT_FOUND")) throw error;
-      await new Promise((resolve) => setTimeout(resolve, 250));
+      const message = String(error?.message || error);
+      if (!message.includes("REPLY_DIALOG_NOT_FOUND") &&
+          !message.includes("REPLY_EDITOR_NOT_FOUND")) throw error;
     }
+    await new Promise((resolve) => setTimeout(resolve, 250));
   }
   if (!editor) {
     let closeResult = null;
@@ -910,10 +918,11 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
     } catch (closeError) {
       closeResult = { closed: false, error: String(closeError?.message || closeError) };
     }
-    const diagnostic = String(lastError?.message || lastError || "unknown");
+    const diagnostic = String(lastError?.message || lastError || "none");
     throw new Error(
       "REPLY_EDITOR_TIMEOUT: 等待目标推文回复编辑框超时；" +
-      "diagnostic=" + diagnostic +
+      "dialog_state=" + JSON.stringify(lastDialogState) +
+      "；diagnostic=" + diagnostic +
       "；close_result=" + JSON.stringify(closeResult)
     );
   }
