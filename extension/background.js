@@ -14,7 +14,8 @@ async function getActiveTab() {
 async function reloadActiveXHome() {
   const tab = await getActiveTab();
   const url = new URL(tab.url);
-  if (url.hostname !== "x.com" || !/^\\/home\\/?$/.test(url.pathname)) {
+  const path = url.pathname.replace(/\\/+$/, "") || "/";
+  if (url.hostname !== "x.com" || path !== "/home") {
     throw new Error("PAGE_CHANGED: 仅允许在 X 首页时间线执行刷新");
   }
   await chrome.tabs.reload(tab.id);
