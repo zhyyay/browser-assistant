@@ -713,15 +713,18 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
           // 只认当前 article 自己的状态永久链接。引用推文/嵌套卡片中的
           // /status/... 链接不能代表外层帖子的 ID，否则会把回复点错。
           const ownPostId = (article) => {
-            const ownLinks = [...article.querySelectorAll('a[href*="/status/"]')]
-              .filter((link) => link.closest('article[data-testid="tweet"]') === article);
             const time = article.querySelector("time");
             const timeLink = time?.closest('a[href*="/status/"]');
-            const candidates = [
-              ...(timeLink && timeLink.closest('article[data-testid="tweet"]') === article ? [timeLink] : []),
-              ...ownLinks
-            ];
-            const ids = [...new Set(candidates.map((link) => {
+            // 时间戳所属链接是当前帖子自己的永久链接，优先且直接采用。
+            if (timeLink && timeLink.closest('article[data-testid="tweet"]') === article) {
+              try {
+                return new URL(timeLink.href, location.origin).pathname.match(/\/status\/(\d+)/)?.[1] || null;
+              } catch { return null; }
+            }
+            // 兼容没有时间戳链接的 DOM：只有当前 article 自身链接唯一时才接受。
+            const ownLinks = [...article.querySelectorAll('a[href*="/status/"]')]
+              .filter((link) => link.closest('article[data-testid="tweet"]') === article);
+            const ids = [...new Set(ownLinks.map((link) => {
               try { return new URL(link.href, location.origin).pathname.match(/\/status\/(\d+)/)?.[1] || null; }
               catch { return null; }
             }).filter(Boolean))];
