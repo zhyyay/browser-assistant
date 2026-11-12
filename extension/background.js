@@ -68,8 +68,9 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
         [...dialog.querySelectorAll(replyEditorSelector)].find(isVisible) || null;
       const findReplyDialog = (postId) => {
         const dialogs = [...document.querySelectorAll(replyDialogSelector)].filter(isVisible);
-        const matchesPost = (dialog) =>
-          [...dialog.querySelectorAll('a[href*="/status/"]')].some((link) => {
+        const editors = [...document.querySelectorAll(replyEditorSelector)].filter(isVisible);
+        const matchesPost = (container) =>
+          [...container.querySelectorAll('a[href*="/status/"]')].some((link) => {
             try {
               return new URL(link.href, location.origin).pathname.match(/\/status\/(\d+)/)?.[1] === postId;
             } catch {
@@ -77,17 +78,23 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
             }
           });
         const exact = dialogs.find(matchesPost);
-        const composerDialogs = dialogs.filter((dialog) => Boolean(findReplyEditor(dialog)));
-        if (exact && findReplyEditor(exact)) {
-          return { dialog: exact, matched_post: true, visible_dialog_count: dialogs.length };
+        if (exact) {
+          const editor = findReplyEditor(exact);
+          if (editor) return { dialog: exact, editor, matched_post: true, visible_dialog_count: dialogs.length, visible_editor_count: editors.length };
         }
-        // X may omit the original status link from its reply dialog. Only use a
-        // fallback when exactly one visible modal contains an editable composer.
+        const composerDialogs = dialogs
+          .map((dialog) => ({ dialog, editor: findReplyEditor(dialog) }))
+          .filter((item) => item.editor);
         if (composerDialogs.length === 1) {
-          return { dialog: composerDialogs[0], matched_post: false, visible_dialog_count: dialogs.length };
+          return { ...composerDialogs[0], matched_post: false, visible_dialog_count: dialogs.length, visible_editor_count: editors.length };
         }
-        if (exact) return { dialog: exact, matched_post: true, visible_dialog_count: dialogs.length };
-        return { dialog: null, matched_post: false, visible_dialog_count: dialogs.length };
+        // Some X modal variants expose a contenteditable composer without a
+        // role=dialog/aria-modal wrapper. Accept only one visible editor on the
+        // entire page; never guess when multiple editors are present.
+        if (editors.length === 1) {
+          return { dialog: editors[0].closest(replyDialogSelector) || editors[0].parentElement, editor: editors[0], matched_post: false, visible_dialog_count: dialogs.length, visible_editor_count: editors.length };
+        }
+        return { dialog: null, editor: null, matched_post: false, visible_dialog_count: dialogs.length, visible_editor_count: editors.length };
       };
       switch (command) {
 
@@ -316,13 +323,7 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
           const postId = String(params.post_id || "");
           const located = findReplyDialog(postId);
           const dialog = located.dialog;
-          if (!dialog) {
-            throw new Error(
-              "REPLY_DIALOG_NOT_FOUND: 未找到唯一的目标回复窗口；visible_dialogs=" +
-              located.visible_dialog_count
-            );
-          }
-          const editor = findReplyEditor(dialog);
+          const editor = located.editor;
           if (!editor) {
             const visibleEditors = [...document.querySelectorAll(replyEditorSelector)]
               .filter(isVisible)
@@ -331,11 +332,13 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
                 role: element.getAttribute("role"),
                 contenteditable: element.getAttribute("contenteditable"),
                 ariaLabel: element.getAttribute("aria-label"),
-                insideDialog: Boolean(element.closest(replyDialogSelector))
+                insideDialog: Boolean(element.closest(replyDialogSelector)),
+                ancestorTestIds: [...(function* () { let node = element; while (node && node !== document.body) { if (node.getAttribute?.("data-testid")) yield node.getAttribute("data-testid"); node = node.parentElement; } })()].slice(0, 8)
               }));
             throw new Error(
-              "REPLY_EDITOR_NOT_FOUND: 回复窗口尚未出现可用编辑框；visible_dialogs=" +
+              "REPLY_EDITOR_NOT_FOUND: 未找到唯一可用回复编辑框；visible_dialogs=" +
               located.visible_dialog_count +
+              "；visible_editor_count=" + located.visible_editor_count +
               "；visible_editors=" + JSON.stringify(visibleEditors)
             );
           }
@@ -346,8 +349,7 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
         }
         case "verify_x_reply_text": {
           const postId = String(params.post_id || "");
-          const dialog = findReplyDialog(postId).dialog;
-          const editor = dialog ? findReplyEditor(dialog) : null;
+          const editor = findReplyDialog(postId).editor;
           const actual = compact(editor?.innerText || editor?.textContent || "", 10000);
           const expected = compact(params.text || "", 10000);
           return { matches: Boolean(editor) && actual === expected, actual, expected, post_id: postId };
@@ -356,10 +358,10 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
           const postId = String(params.post_id || "");
           const located = findReplyDialog(postId);
           const dialog = located.dialog;
-          if (!dialog) {
+          if (!dialog || !located.editor) {
             throw new Error(
               "REPLY_DIALOG_NOT_FOUND: 回复窗口已关闭或无法唯一匹配；visible_dialogs=" +
-              located.visible_dialog_count
+              located.visible_dialog_count + "；visible_editors=" + located.visible_editor_count
             );
           }
           const button = [...dialog.querySelectorAll('[data-testid="tweetButton"], [data-testid="tweetButtonInline"]')]
