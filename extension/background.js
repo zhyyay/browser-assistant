@@ -291,6 +291,12 @@ async function executeAutomationInPage(command, params = {}) {
   return executeInPage(command, params, tab.id);
 }
 
+// 页面状态检测也必须限定在独立自动化标签页，绝不读取用户当前活动标签页。
+async function getAutomationPageInfo() {
+  await openAutomationWindow();
+  return executeAutomationInPage("get_page_info");
+}
+
 async function executeInPage(command, params = {}, fixedTabId = null) {
   const tab = fixedTabId === null ? await getActiveTab() : await chrome.tabs.get(fixedTabId);
   const [injection] = await chrome.scripting.executeScript({
@@ -1518,6 +1524,8 @@ function handleNativeMessage(message) {
         if (!allowed.has(message.command)) throw new Error("unsupported desktop command: " + message.command);
         const result = message.command === "open_automation_window"
           ? await openAutomationWindow()
+          : message.command === "get_page_info"
+            ? await getAutomationPageInfo()
           : message.command === "reload_page"
             ? await reloadActiveXHome()
           : message.command === "post_x_tweet"
@@ -1591,6 +1599,8 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         }
         const result = message.command === "open_automation_window"
           ? await openAutomationWindow()
+          : message.command === "get_page_info"
+            ? await getAutomationPageInfo()
           : message.command === "reload_page"
             ? await reloadActiveXHome()
           : message.command === "post_x_tweet"
