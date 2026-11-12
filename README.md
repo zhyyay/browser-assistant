@@ -42,6 +42,35 @@ let response = browser.execute(BrowserCommand::GetPageInfo)?;
 
 完整协议、Token 位置和限制见 [docs/ipc.md](docs/ipc.md)。
 
+## 轻量浏览器 API
+
+桌面 Rust 程序可以直接使用封装后的基础方法，不必在业务代码中手动组装 `BrowserCommand`：
+
+```rust
+use browser_assistant_client::BrowserClient;
+
+let mut browser = BrowserClient::connect()?;
+
+// 页面信息与可见文本
+let page = browser.page_info()?;
+let snapshot = browser.snapshot(Some(12_000))?;
+
+// CSS 选择器定位、点击和输入
+let elements = browser.find_elements("button", Some(20))?;
+browser.click("button[type='button']")?;
+browser.fill("textarea", "测试内容")?;
+
+// 滚动页面
+browser.scroll(500)?;
+```
+
+这些方法仍然通过现有 Native Host / IPC / Chrome Extension 执行：
+- DOM 负责页面信息、文本和 CSS 选择器定位。
+- CDP 负责点击、输入和滚动。
+- `fill` 会先清空输入框，再输入并回读验证。
+- `snapshot` 是轻量页面快照（页面信息 + 可见文本），不是完整 DOM 导出。
+- 操作目标是当前活动标签页；暂不提供复杂 Agent、跨标签页调度或后台并行任务。
+
 ## 安全
 
 - 扩展仅声明当前功能需要的 `activeTab`、`scripting`、`tabs` 和 `nativeMessaging` 权限；不申请 `cookies`、`webRequest`、`debugger`、`history`、`downloads` 或广泛站点访问权限。
