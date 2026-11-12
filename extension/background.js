@@ -1133,12 +1133,45 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
     y: submit.viewport_y + submit.height / 2
   }, tab.id);
 
-  const [networkSettled, pageSettled] = await Promise.allSettled([
-    networkCapture.wait(),
-    executeInPage("wait_x_reply_confirmation", {
+  const networkPromise = networkCapture.wait();
+  const pagePromise = executeInPage("wait_x_reply_confirmation", {
+    post_id: postId,
+    confirm_timeout_ms: confirmTimeoutMs
+  }, tab.id);
+  const firstConfirmation = await Promise.race([
+    networkPromise.then((result) => ({ source: "network", result })),
+    pagePromise.then((result) => ({ source: "page", result }))
+  ]);
+
+  if (firstConfirmation.source === "network" &&
+      firstConfirmation.result?.status === "confirmed") {
+    return {
+      status: "sent",
+      submitted: true,
+      confirmed: true,
+      confirmation_source: "cdp_create_tweet_response",
+      network_confirmation: firstConfirmation.result,
       post_id: postId,
-      confirm_timeout_ms: confirmTimeoutMs
-    }, tab.id)
+      created_tweet_id: firstConfirmation.result.created_tweet_id,
+      message: "已通过 X CreateTweet 网络响应确认回复已发送",
+      input_mode: "chrome_devtools_protocol"
+    };
+  }
+
+  if (firstConfirmation.source === "page" &&
+      firstConfirmation.result?.status === "sent") {
+    networkCapture.cancel();
+    return {
+      ...firstConfirmation.result,
+      confirmation_source: "x_success_toast",
+      network_confirmation: { status: "not_needed_to_confirm" },
+      input_mode: "chrome_devtools_protocol"
+    };
+  }
+
+  const [networkSettled, pageSettled] = await Promise.allSettled([
+    networkPromise,
+    pagePromise
   ]);
   const networkResult = networkSettled.status === "fulfilled"
     ? networkSettled.value
@@ -1156,13 +1189,13 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
 
   if (networkResult.status === "confirmed") {
     return {
-      ...pageResult,
       status: "sent",
       submitted: true,
       confirmed: true,
       confirmation_source: "cdp_create_tweet_response",
       network_confirmation: networkResult,
       post_id: postId,
+      created_tweet_id: networkResult.created_tweet_id,
       message: "已通过 X CreateTweet 网络响应确认回复已发送",
       input_mode: "chrome_devtools_protocol"
     };
