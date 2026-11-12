@@ -5,9 +5,9 @@ const pending = new Map();
 
 async function getActiveTab() {
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  if (!tab?.id || !tab.url || !/^https?:\\/\\//i.test(tab.url)) {
+  if (!tab?.id || !tab.url || !/^https?:\/\//i.test(tab.url)) {
     const tabId = Number.isInteger(tab?.id) ? tab.id : "无";
-    const title = String(tab?.title || "无").replace(/\\s+/g, " ").slice(0, 120);
+    const title = String(tab?.title || "无").replace(/\s+/g, " ").slice(0, 120);
     const url = String(tab?.url || "无").slice(0, 300);
     const status = String(tab?.status || "未知");
     throw new Error(
