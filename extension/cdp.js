@@ -88,7 +88,11 @@ async function ensureAttached(tabId) {
 async function send(tabId, method, params = {}) {
   await ensureAttached(tabId);
   try {
-    return await chrome.debugger.sendCommand({ tabId }, method, params);
+    return await withTimeout(
+      chrome.debugger.sendCommand({ tabId }, method, params),
+      4000,
+      `CDP_COMMAND_TIMEOUT: tab_id=${tabId}, method=${method}`
+    );
   } catch (error) {
     const message = String(error?.message || error);
     if (/not attached|debugger.*detached|target.*closed/i.test(message)) {
@@ -97,6 +101,16 @@ async function send(tabId, method, params = {}) {
     }
     throw error;
   }
+}
+
+function withTimeout(promise, timeoutMs, message) {
+  let timer;
+  return Promise.race([
+    Promise.resolve(promise),
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${message} after ${timeoutMs}ms`)), timeoutMs);
+    })
+  ]).finally(() => clearTimeout(timer));
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -270,5 +284,9 @@ async function dispatchCdpInputUnlocked(tabId, params = {}) {
 export function dispatchCdpInput(tabId, params = {}) {
   // Keep each click/type/scroll sequence atomic per tab. This prevents two
   // concurrent Rust requests from interleaving pointer and keyboard events.
-  return enqueueTabOperation(tabId, () => dispatchCdpInputUnlocked(tabId, params));
+  const operation = enqueueTabOperation(tabId, () => dispatchCdpInputUnlocked(tabId, params));
+  if (params.action === "scroll") {
+    return withTimeout(operation, 12000, `CDP_SCROLL_TIMEOUT: tab_id=${tabId}`);
+  }
+  return operation;
 }
