@@ -43,9 +43,26 @@ async function startXReplyNetworkCapture(tabId, postId, content, timeoutMs) {
           !/(?:^|\/)CreateTweet(?:\?|$)/i.test(String(request.url || ""))) return;
 
       const postData = String(request.postData || "");
-      // X's CreateTweet GraphQL payload includes tweet_text and the reply's
-      // in_reply_to_tweet_id. Require both exact values to avoid unrelated posts.
-      if (!postData.includes(postId) || !postData.includes(content)) return;
+      let requestPayload = null;
+      try { requestPayload = JSON.parse(postData); } catch {}
+      const variables = requestPayload?.variables || requestPayload || {};
+      const normalizeText = (value) => String(value || "").replace(/\s+/g, " ").trim();
+      const containsExactText = (value) => {
+        if (typeof value === "string") return normalizeText(value) === normalizeText(content);
+        if (Array.isArray(value)) return value.some(containsExactText);
+        if (value && typeof value === "object") return Object.values(value).some(containsExactText);
+        return false;
+      };
+      const replyTargetId =
+        variables?.reply?.in_reply_to_tweet_id ||
+        variables?.reply?.in_reply_to_tweet_id_str ||
+        variables?.in_reply_to_tweet_id ||
+        "";
+      const targetMatches = String(replyTargetId) === postId ||
+        (postData.includes(postId) && /in_reply_to_tweet_id/.test(postData));
+      // Parse JSON first so escaped newlines/quotes do not break exact text matching.
+      const textMatches = containsExactText(variables) || postData.includes(content);
+      if (!targetMatches || !textMatches) return;
 
       requests.set(params.requestId, {
         url: String(request.url || ""),
