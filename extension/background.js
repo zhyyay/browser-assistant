@@ -315,6 +315,35 @@ async function performCdpInput(params, tabId) {
   return dispatchCdpInput(tabId, params);
 }
 
+async function closeReplyComposerSafely(tabId, postId) {
+  let result = await executeInPage("close_x_reply_dialog", { post_id: postId }, tabId);
+  if (!result?.needs_escape) return result;
+
+  // Use a trusted browser input event. Synthetic KeyboardEvent dispatched
+  // from page JS is untrusted and X may ignore it.
+  await performCdpInput({ action: "key_press", key: "Escape" }, tabId);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+
+  const state = await executeInPage("inspect_x_reply_dialog", { post_id: postId }, tabId);
+  if (!state?.editor_found) {
+    return {
+      closed: true,
+      already_closed: false,
+      closed_count: 1,
+      method: "cdp_escape",
+      match_strategy: state?.match_strategy || result.match_strategy || "unknown"
+    };
+  }
+  return {
+    closed: false,
+    reason: "CLOSE_NOT_CONFIRMED",
+    method: "cdp_escape",
+    match_strategy: state.match_strategy || result.match_strategy || "unknown",
+    editor_found: true,
+    visible_editor_count: state.visible_editor_count
+  };
+}
+
 async function navigateTab(tabId, url) {
   if (!/^https:\/\//.test(url) && !/^http:\/\//.test(url)) {
     throw new Error("仅允许导航到 HTTP/HTTPS 页面");
@@ -1377,7 +1406,7 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
   if (!editor) {
     let closeResult = null;
     try {
-      closeResult = await executeInPage("close_x_reply_dialog", { post_id: postId }, tab.id);
+      closeResult = await closeReplyComposerSafely(tab.id, postId);
     } catch (closeError) {
       closeResult = { closed: false, error: String(closeError?.message || closeError) };
     }
@@ -1405,7 +1434,7 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
     // it is gone before allowing the desktop runner to continue to another post.
     let closeResult;
     try {
-      closeResult = await executeInPage("close_x_reply_dialog", { post_id: postId }, tab.id);
+      closeResult = await closeReplyComposerSafely(tab.id, postId);
     } catch (error) {
       closeResult = { closed: false, error: String(error?.message || error) };
     }
