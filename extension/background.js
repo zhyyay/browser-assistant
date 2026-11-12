@@ -239,12 +239,6 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
           if (location.hostname !== "x.com") throw new Error("PAGE_CHANGED: 当前不是 X 页面");
           const postId = String(params.post_id || "");
           if (!/^\d{5,30}$/.test(postId)) throw new Error("INVALID_POST_ID: 推文 ID 无效");
-          const visible = (element) => {
-            if (!(element instanceof HTMLElement)) return false;
-            const rect = element.getBoundingClientRect();
-            const style = getComputedStyle(element);
-            return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
-          };
           const article = [...document.querySelectorAll('article[data-testid="tweet"]')].find((item) =>
             [...item.querySelectorAll('a[href*="/status/"]')].some((link) =>
               new URL(link.href, location.origin).pathname.match(/\/status\/(\d+)/)?.[1] === postId
@@ -252,10 +246,19 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
           );
           if (!article) throw new Error("POST_NOT_FOUND: 当前已加载的时间线中找不到指定推文，请先重新解析时间线");
           const button = article.querySelector('[data-testid="reply"]');
-          if (!button || !visible(button) || button.getAttribute("aria-disabled") === "true") {
+          if (!button || !isVisible(button) || button.getAttribute("aria-disabled") === "true") {
             throw new Error("REPLY_BUTTON_NOT_FOUND: 指定推文没有可用的回复按钮");
           }
-          return { ...rectOf(button), post_id: postId };
+          // Parsed timeline items may be in the DOM but outside the viewport.
+          // Bring the exact target button into view before sending CDP coordinates.
+          button.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" });
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          const rect = rectOf(button);
+          if (rect.viewport_x + rect.width <= 0 || rect.viewport_y + rect.height <= 0 ||
+              rect.viewport_x >= window.innerWidth || rect.viewport_y >= window.innerHeight) {
+            throw new Error("REPLY_BUTTON_OUTSIDE_VIEWPORT: 已定位目标推文，但回复按钮仍不在可点击视口内");
+          }
+          return { ...rect, post_id: postId };
         }
         case "get_x_reply_editor_rect": {
           if (location.hostname !== "x.com") throw new Error("PAGE_CHANGED: 当前不是 X 页面");
@@ -737,7 +740,7 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
 
   let editor = null;
   let lastError = null;
-  const editorDeadline = Date.now() + 10000;
+  const editorDeadline = Date.now() + 15000;
   while (Date.now() < editorDeadline) {
     try {
       editor = await executeInPage("get_x_reply_editor_rect", { post_id: postId }, tab.id);
