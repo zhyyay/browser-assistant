@@ -10,6 +10,10 @@ use browser_core::{
 };
 use interprocess::local_socket::{prelude::*, GenericNamespaced, Stream};
 
+pub mod element;
+pub mod input;
+pub mod page;
+pub mod snapshot;
 pub mod x;
 
 static NEXT_REQUEST_ID: AtomicU64 = AtomicU64::new(1);
@@ -37,6 +41,15 @@ impl BrowserClient {
             bail!("Browser Assistant IPC token is empty");
         }
         Ok(Self { reader: Some(connect_stream()?), token })
+    }
+
+    /// Execute a command and return its JSON result, converting protocol errors to anyhow errors.
+    pub(crate) fn execute_value(&mut self, command: BrowserCommand) -> Result<serde_json::Value> {
+        let response = self.execute(command)?;
+        if !response.ok {
+            bail!(response.error.unwrap_or_else(|| "browser command failed".to_owned()));
+        }
+        Ok(response.result.unwrap_or(serde_json::Value::Null))
     }
 
     /// Send one command. Each request uses a short-lived local IPC connection.
