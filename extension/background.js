@@ -264,7 +264,8 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
           return { ...rectOf(button), post_id: postId };
         }
         case "wait_x_reply_confirmation": {
-          const timeoutMs = Math.min(Math.max(Number(params.confirm_timeout_ms) || 8000, 3000), 15000);
+          // 发帖确认允许等待完整的 15 秒；Native Host 对 post_x_tweet 单独提供 120 秒上限。
+          const timeoutMs = Math.min(Math.max(Number(params.confirm_timeout_ms) || 15000, 3000), 15000);
           const startedAt = Date.now();
           const visible = (element) => {
             if (!(element instanceof HTMLElement)) return false;
