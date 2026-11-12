@@ -3,6 +3,19 @@ const NATIVE_HOST = "com.zhyyay.browser_assistant";
 let nativePort = null;
 const pending = new Map();
 
+function withCommandTimeout(promise, timeoutMs, label) {
+  let timer;
+  return Promise.race([
+    Promise.resolve(promise),
+    new Promise((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`${label}_TIMEOUT: 超过 ${timeoutMs}ms 未完成`)),
+        timeoutMs
+      );
+    })
+  ]).finally(() => clearTimeout(timer));
+}
+
 // Capture only the CreateTweet request that contains this exact reply target
 // and text. A generic HTTP 200 is not sufficient: X must return the created
 // tweet ID and no GraphQL errors.
@@ -313,7 +326,8 @@ async function getAutomationPageInfo() {
 
 async function executeInPage(command, params = {}, fixedTabId = null) {
   const tab = fixedTabId === null ? await getActiveTab() : await chrome.tabs.get(fixedTabId);
-  const [injection] = await chrome.scripting.executeScript({
+  const [injection] = await withCommandTimeout(
+    chrome.scripting.executeScript({
     target: { tabId: tab.id },
     args: [{ command, params }],
     func: async ({ command, params }) => {
@@ -1055,7 +1069,10 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
           throw new Error("unsupported page command: " + command);
       }
     }
-  });
+    }),
+    command === "scroll" ? 12000 : 20000,
+    `PAGE_SCRIPT_${command}`
+  );
   const result = injection?.result ?? null;
   if (!result) return result;
 
