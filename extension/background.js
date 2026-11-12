@@ -179,13 +179,16 @@ const AUTOMATION_TAB_STORAGE_KEY = "xAutomationTabId";
 
 async function getAutomationTab() {
   const stored = await chrome.storage.local.get(AUTOMATION_TAB_STORAGE_KEY);
-  const tabId = Number(stored?.[AUTOMATION_TAB_STORAGE_KEY]);
-  if (!Number.isInteger(tabId) || tabId <= 0) return null;
+  const rawTabId = stored?.[AUTOMATION_TAB_STORAGE_KEY];
+  if (rawTabId === undefined || rawTabId === null) return null;
+  const tabId = Number(rawTabId);
+  if (!Number.isInteger(tabId) || tabId <= 0) {
+    throw new Error("AUTOMATION_TAB_INVALID: 自动化窗口标签页标识无效，拒绝回退到个人浏览器");
+  }
   try {
     return await chrome.tabs.get(tabId);
   } catch {
-    await chrome.storage.local.remove(AUTOMATION_TAB_STORAGE_KEY);
-    return null;
+    throw new Error("AUTOMATION_TAB_CLOSED: 独立自动化窗口已关闭；为避免操作个人浏览器，已停止本次命令");
   }
 }
 
@@ -202,7 +205,13 @@ async function waitForAutomationTabReady(tabId, timeoutMs = 30000) {
 }
 
 async function openAutomationWindow() {
-  let tab = await getAutomationTab();
+  let tab = null;
+  try {
+    tab = await getAutomationTab();
+  } catch (error) {
+    if (!String(error?.message || error).includes("AUTOMATION_TAB_CLOSED")) throw error;
+    await chrome.storage.local.remove(AUTOMATION_TAB_STORAGE_KEY);
+  }
   const reused = Boolean(tab);
   if (tab) {
     const current = new URL(String(tab.url || "https://x.com/home"));
