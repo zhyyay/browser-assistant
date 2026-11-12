@@ -448,6 +448,7 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
             found: replyDialogs.length > 0 || Boolean(located.editor),
             editor_found: Boolean(located.editor),
             matched_post: Boolean(located.matched_post),
+            match_strategy: located.match_strategy || "none",
             visible_dialog_count: located.visible_dialog_count,
             reply_dialog_count: replyDialogs.length,
             visible_editor_count: located.visible_editor_count,
@@ -458,6 +459,29 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
         case "close_x_reply_dialog": {
           if (location.hostname !== "x.com") throw new Error("PAGE_CHANGED: 当前不是 X 页面");
           const postId = String(params.post_id || "");
+          const located = findReplyDialog(postId);
+          // The composer may live in a non-semantic wrapper. Close it only when
+          // the editor and reply submit control were tied to this exact post.
+          if (located.dialog && located.editor && located.matched_post) {
+            const target = located.dialog;
+            const editor = located.editor;
+            const closeButton = target.querySelector('[data-testid="app-bar-close"], [aria-label="Close"], [aria-label="关闭"]');
+            if (closeButton && isVisible(closeButton)) {
+              closeButton.click();
+            } else {
+              editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true }));
+              document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true }));
+            }
+            const deadline = Date.now() + 1500;
+            while (Date.now() < deadline) {
+              if (!editor.isConnected || !isVisible(editor)) {
+                return { closed: true, already_closed: false, closed_count: 1, method: closeButton ? "close_button" : "escape", match_strategy: located.match_strategy };
+              }
+              await new Promise((resolve) => setTimeout(resolve, 100));
+            }
+            return { closed: false, reason: "CLOSE_NOT_CONFIRMED", method: closeButton ? "close_button" : "escape", match_strategy: located.match_strategy };
+          }
+
           const dialogs = [...document.querySelectorAll(replyDialogSelector)]
             .filter(isVisible)
             .filter((dialog) => isReplyDialog(dialog, postId));
@@ -733,7 +757,7 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
           if (editor.getAttribute("aria-disabled") === "true" || editor.getAttribute("contenteditable") === "false") {
             throw new Error("REPLY_EDITOR_DISABLED: 回复编辑框当前不可用");
           }
-          return { ...rectOf(editor), post_id: postId, dialog_found: true };
+          return { ...rectOf(editor), post_id: postId, dialog_found: true, matched_post: Boolean(located.matched_post), match_strategy: located.match_strategy || "unknown" };
         }
         case "verify_x_reply_text": {
           const postId = String(params.post_id || "");
