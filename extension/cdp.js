@@ -285,6 +285,29 @@ async function dispatchCdpInputUnlocked(tabId, params = {}) {
     return typeText(tabId, params);
   }
 
+  if (action === "key_press") {
+    const key = String(params.key || "");
+    const definitions = {
+      Escape: { code: "Escape", keyCode: 27, key: "Escape" }
+    };
+    const definition = definitions[key];
+    if (!definition) throw new Error("不支持的 CDP 按键: " + key);
+    const event = {
+      key: definition.key,
+      code: definition.code,
+      windowsVirtualKeyCode: definition.keyCode,
+      nativeVirtualKeyCode: definition.keyCode
+    };
+    try {
+      await send(tabId, "Input.dispatchKeyEvent", { ...event, type: "keyDown" });
+      await sleep(80);
+    } finally {
+      // Always attempt keyUp after keyDown, including when the page is slow.
+      await send(tabId, "Input.dispatchKeyEvent", { ...event, type: "keyUp" });
+    }
+    return { performed: true, action, key };
+  }
+
   if (action === "scroll") {
     let remaining = Math.max(-12000, Math.min(12000, Number(params.delta_y) || 0));
     const x = Number(params.x);
