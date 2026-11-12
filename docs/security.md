@@ -10,8 +10,9 @@ The Manifest V3 extension declares only:
 - `scripting`
 - `tabs`
 - `nativeMessaging`
+- `debugger`
 
-It does not declare `cookies`, `webRequest`, `debugger`, `history`, `downloads`, `storage`, `tabGroups`, or broad `host_permissions`.
+The `debugger` permission is used by `extension/cdp.js` to dispatch controlled mouse, keyboard and wheel input through Chrome DevTools Protocol. It is not used to read cookies, profile data or authentication material.
 
 The `tabs` permission is retained because the background worker queries the active tab and reads its URL before deciding whether it can inject the page command. `activeTab` and `scripting` are used for controlled script injection. `nativeMessaging` is required for the Rust bridge.
 
@@ -47,7 +48,7 @@ The target website itself may make its own network requests while rendering. Tho
 
 Before merging code that changes browser permissions, extension scripts, or the Native Host:
 
-1. Reject new `cookies`, `webRequest`, `debugger`, or broad host permissions unless there is a documented requirement and explicit user approval.
+1. Reject new `cookies`, `webRequest`, or broad host permissions unless there is a documented requirement and explicit user approval. Retain `debugger` only for the documented CDP input path; review any expansion of its use separately.
 2. Reject code that reads cookies, browser profile databases, password stores, local/session storage, or authentication tokens.
 3. Reject page-data transmission to remote endpoints unless the destination, payload, and user consent are explicitly documented.
 4. Keep Native Messaging `allowed_origins` restricted to the exact extension ID.
