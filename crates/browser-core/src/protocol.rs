@@ -6,6 +6,7 @@ pub enum BrowserCommand {
     Ping,
     AuthorizeCommand { action: String },
     GetPageInfo,
+    ReloadPage,
     GetXPosts { limit: Option<usize> },
     PostXTweet { text: String },
     ReplyToXPost { post_id: String, text: String },
