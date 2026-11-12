@@ -50,6 +50,36 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
           device_pixel_ratio: window.devicePixelRatio || 1
         };
       };
+      const isVisible = (element) => {
+        if (!(element instanceof HTMLElement)) return false;
+        const rect = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        return rect.width > 0 && rect.height > 0 &&
+          style.visibility !== "hidden" && style.display !== "none";
+      };
+      const replyEditorSelector =
+        '[data-testid="tweetTextarea_0"], [role="textbox"][data-testid="tweetTextarea_0"], [role="textbox"][contenteditable="true"]';
+      const findReplyDialog = (postId) => {
+        const dialogs = [...document.querySelectorAll('[role="dialog"]')].filter(isVisible);
+        const matchesPost = (dialog) =>
+          [...dialog.querySelectorAll('a[href*="/status/"]')].some((link) =>
+            new URL(link.href, location.origin).pathname.match(/\/status\/(\d+)/)?.[1] === postId
+          );
+        const exact = dialogs.find(matchesPost);
+        if (exact) return { dialog: exact, matched_post: true, visible_dialog_count: dialogs.length };
+        const composerDialogs = dialogs.filter((dialog) =>
+          [...dialog.querySelectorAll(replyEditorSelector)].some(isVisible)
+        );
+        // X may omit the original status link from its reply dialog. Only use a
+        // fallback when there is exactly one visible dialog containing an editor;
+        // never guess between multiple dialogs.
+        if (composerDialogs.length === 1) {
+          return { dialog: composerDialogs[0], matched_post: false, visible_dialog_count: dialogs.length };
+        }
+        return { dialog: null, matched_post: false, visible_dialog_count: dialogs.length };
+      };
+      const findReplyEditor = (dialog) =>
+        [...dialog.querySelectorAll(replyEditorSelector)].find(isVisible) || null;
       switch (command) {
 
         case "get_x_posts": {
@@ -230,19 +260,15 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
         case "get_x_reply_editor_rect": {
           if (location.hostname !== "x.com") throw new Error("PAGE_CHANGED: 当前不是 X 页面");
           const postId = String(params.post_id || "");
-          const visible = (element) => {
-            if (!(element instanceof HTMLElement)) return false;
-            const rect = element.getBoundingClientRect();
-            const style = getComputedStyle(element);
-            return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
-          };
-          const dialog = [...document.querySelectorAll('[role="dialog"]')].find((item) =>
-            visible(item) && [...item.querySelectorAll('a[href*="/status/"]')].some((link) =>
-              new URL(link.href, location.origin).pathname.match(/\/status\/(\d+)/)?.[1] === postId
-            )
-          );
-          if (!dialog) throw new Error("REPLY_DIALOG_NOT_FOUND: 未找到与目标推文对应的回复窗口");
-          const editor = [...dialog.querySelectorAll('[data-testid="tweetTextarea_0"], [role="textbox"][data-testid="tweetTextarea_0"]')].find(visible);
+          const located = findReplyDialog(postId);
+          const dialog = located.dialog;
+          if (!dialog) {
+            throw new Error(
+              "REPLY_DIALOG_NOT_FOUND: 未找到唯一的目标回复窗口；visible_dialogs=" +
+              located.visible_dialog_count
+            );
+          }
+          const editor = findReplyEditor(dialog);
           if (!editor) throw new Error("REPLY_EDITOR_NOT_FOUND: 回复窗口尚未出现可用编辑框");
           if (editor.getAttribute("aria-disabled") === "true" || editor.getAttribute("contenteditable") === "false") {
             throw new Error("REPLY_EDITOR_DISABLED: 回复编辑框当前不可用");
@@ -251,32 +277,24 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
         }
         case "verify_x_reply_text": {
           const postId = String(params.post_id || "");
-          const dialog = [...document.querySelectorAll('[role="dialog"]')].find((item) =>
-            [...item.querySelectorAll('a[href*="/status/"]')].some((link) =>
-              new URL(link.href, location.origin).pathname.match(/\/status\/(\d+)/)?.[1] === postId
-            )
-          );
-          const editor = dialog?.querySelector('[data-testid="tweetTextarea_0"], [role="textbox"][data-testid="tweetTextarea_0"]');
+          const dialog = findReplyDialog(postId).dialog;
+          const editor = dialog ? findReplyEditor(dialog) : null;
           const actual = compact(editor?.innerText || editor?.textContent || "", 10000);
           const expected = compact(params.text || "", 10000);
           return { matches: Boolean(editor) && actual === expected, actual, expected, post_id: postId };
         }
         case "get_x_reply_submit_button_rect": {
           const postId = String(params.post_id || "");
-          const visible = (element) => {
-            if (!(element instanceof HTMLElement)) return false;
-            const rect = element.getBoundingClientRect();
-            const style = getComputedStyle(element);
-            return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
-          };
-          const dialog = [...document.querySelectorAll('[role="dialog"]')].find((item) =>
-            [...item.querySelectorAll('a[href*="/status/"]')].some((link) =>
-              new URL(link.href, location.origin).pathname.match(/\/status\/(\d+)/)?.[1] === postId
-            )
-          );
-          if (!dialog) throw new Error("REPLY_DIALOG_NOT_FOUND: 回复窗口已关闭或目标推文不匹配");
+          const located = findReplyDialog(postId);
+          const dialog = located.dialog;
+          if (!dialog) {
+            throw new Error(
+              "REPLY_DIALOG_NOT_FOUND: 回复窗口已关闭或无法唯一匹配；visible_dialogs=" +
+              located.visible_dialog_count
+            );
+          }
           const button = [...dialog.querySelectorAll('[data-testid="tweetButton"], [data-testid="tweetButtonInline"]')]
-            .find((element) => visible(element) && !element.disabled && element.getAttribute("aria-disabled") !== "true");
+            .find((element) => isVisible(element) && !element.disabled && element.getAttribute("aria-disabled") !== "true");
           if (!button) throw new Error("REPLY_SUBMIT_BUTTON_NOT_FOUND: 未找到可用的回复提交按钮");
           return { ...rectOf(button), post_id: postId };
         }
