@@ -57,32 +57,38 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
         return rect.width > 0 && rect.height > 0 &&
           style.visibility !== "hidden" && style.display !== "none";
       };
+      // X changes composer test IDs and modal wrappers periodically. Keep the
+      // selector broad enough for current contenteditable editors, but only
+      // resolve an editor inside a visible modal/dialog.
       const replyEditorSelector =
-        '[data-testid="tweetTextarea_0"], [role="textbox"][data-testid="tweetTextarea_0"], [role="textbox"][contenteditable="true"]';
+        '[data-testid="tweetTextarea_0"], [data-testid^="tweetTextarea"][contenteditable="true"], [role="textbox"][contenteditable="true"], div[contenteditable="true"]';
+      const replyDialogSelector =
+        '[role="dialog"], [aria-modal="true"], [data-testid="sheetDialog"], [data-testid*="modal" i]';
+      const findReplyEditor = (dialog) =>
+        [...dialog.querySelectorAll(replyEditorSelector)].find(isVisible) || null;
       const findReplyDialog = (postId) => {
-        const dialogs = [...document.querySelectorAll('[role="dialog"]')].filter(isVisible);
+        const dialogs = [...document.querySelectorAll(replyDialogSelector)].filter(isVisible);
         const matchesPost = (dialog) =>
-          [...dialog.querySelectorAll('a[href*="/status/"]')].some((link) =>
-            new URL(link.href, location.origin).pathname.match(/\/status\/(\d+)/)?.[1] === postId
-          );
+          [...dialog.querySelectorAll('a[href*="/status/"]')].some((link) => {
+            try {
+              return new URL(link.href, location.origin).pathname.match(/\/status\/(\d+)/)?.[1] === postId;
+            } catch {
+              return false;
+            }
+          });
         const exact = dialogs.find(matchesPost);
-        const composerDialogs = dialogs.filter((dialog) =>
-          [...dialog.querySelectorAll(replyEditorSelector)].some(isVisible)
-        );
+        const composerDialogs = dialogs.filter((dialog) => Boolean(findReplyEditor(dialog)));
         if (exact && findReplyEditor(exact)) {
           return { dialog: exact, matched_post: true, visible_dialog_count: dialogs.length };
         }
         // X may omit the original status link from its reply dialog. Only use a
-        // fallback when there is exactly one visible dialog containing an editor;
-        // never guess between multiple dialogs.
+        // fallback when exactly one visible modal contains an editable composer.
         if (composerDialogs.length === 1) {
           return { dialog: composerDialogs[0], matched_post: false, visible_dialog_count: dialogs.length };
         }
         if (exact) return { dialog: exact, matched_post: true, visible_dialog_count: dialogs.length };
         return { dialog: null, matched_post: false, visible_dialog_count: dialogs.length };
       };
-      const findReplyEditor = (dialog) =>
-        [...dialog.querySelectorAll(replyEditorSelector)].find(isVisible) || null;
       switch (command) {
 
         case "get_x_posts": {
@@ -275,7 +281,22 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
             );
           }
           const editor = findReplyEditor(dialog);
-          if (!editor) throw new Error("REPLY_EDITOR_NOT_FOUND: 回复窗口尚未出现可用编辑框");
+          if (!editor) {
+            const visibleEditors = [...document.querySelectorAll(replyEditorSelector)]
+              .filter(isVisible)
+              .map((element) => ({
+                testid: element.getAttribute("data-testid"),
+                role: element.getAttribute("role"),
+                contenteditable: element.getAttribute("contenteditable"),
+                ariaLabel: element.getAttribute("aria-label"),
+                insideDialog: Boolean(element.closest(replyDialogSelector))
+              }));
+            throw new Error(
+              "REPLY_EDITOR_NOT_FOUND: 回复窗口尚未出现可用编辑框；visible_dialogs=" +
+              located.visible_dialog_count +
+              "；visible_editors=" + JSON.stringify(visibleEditors)
+            );
+          }
           if (editor.getAttribute("aria-disabled") === "true" || editor.getAttribute("contenteditable") === "false") {
             throw new Error("REPLY_EDITOR_DISABLED: 回复编辑框当前不可用");
           }
