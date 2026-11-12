@@ -159,13 +159,14 @@ fn spawn_ipc_listener(tx: Sender<HostEvent>, token: String) -> Result<()> {
                 let request_id = envelope.request.id.clone();
                 // X 发帖包含页面输入、提交和成功提示确认，单独给予更长等待时间。
                 // 其他浏览器命令仍保持 45 秒，避免影响普通操作的响应速度。
-                let command_timeout = if matches!(
-                    &envelope.request.command,
-                    BrowserCommand::PostXTweet { .. }
-                ) {
-                    Duration::from_secs(120)
-                } else {
-                    Duration::from_secs(45)
+                let command_timeout = match &envelope.request.command {
+                    BrowserCommand::PostXTweet { .. } => Duration::from_secs(120),
+                    BrowserCommand::ScrollAutomation { .. } | BrowserCommand::Scroll { .. } => {
+                        // Scroll is a short operation. Return a diagnostic failure promptly
+                        // instead of leaving the desktop worker blocked for the generic 45s.
+                        Duration::from_secs(30)
+                    }
+                    _ => Duration::from_secs(45),
                 };
                 let (reply_tx, reply_rx) = mpsc::channel();
                 if tx.send(HostEvent::DesktopRequest { request: envelope.request, reply: reply_tx }).is_err() {
