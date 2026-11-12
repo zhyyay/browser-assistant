@@ -957,11 +957,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         if (!authorization?.ok || !authorization.result?.authorized) {
           throw new Error(authorization?.error || "Rust Host rejected the command");
         }
-        const result = message.command === "post_x_tweet"
-          ? await executePostXTweet(message.params || {})
-          : message.command === "reply_to_x_post"
-            ? await executeReplyToXPost(message.params || {})
-            : await executeInPage(message.command, message.params || {});
+        const result = message.command === "reload_page"
+          ? await reloadActiveXHome()
+          : message.command === "post_x_tweet"
+            ? await executePostXTweet(message.params || {})
+            : message.command === "reply_to_x_post"
+              ? await executeReplyToXPost(message.params || {})
+              : await executeInPage(message.command, message.params || {});
         sendResponse({ ok: true, result, authorized_by: "rust-native-host" });
         return;
       }
