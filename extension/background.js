@@ -701,13 +701,14 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
           });
         }
         case "wait_x_post_confirmation": {
+          // 发帖成功提示最多等待 15 秒；Native Host 对发帖命令单独设置 120 秒上限。
           const visible = (element) => {
             if (!(element instanceof HTMLElement)) return false;
             const rect = element.getBoundingClientRect();
             const style = getComputedStyle(element);
             return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
           };
-          const timeoutMs = Math.min(Math.max(Number(params.confirm_timeout_ms) || 8000, 3000), 15000);
+          const timeoutMs = Math.min(Math.max(Number(params.confirm_timeout_ms) || 15000, 3000), 15000);
           const startedAt = Date.now();
           while (Date.now() - startedAt < timeoutMs) {
             const toast = [...document.querySelectorAll('[data-testid="toast"], [role="alert"]')]
