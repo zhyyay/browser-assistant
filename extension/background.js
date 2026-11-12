@@ -214,14 +214,14 @@ async function openAutomationWindow() {
   }
   // 存储的 tabId 如果指向非 X 网站，说明记录已污染或过期。
   // 绝不把用户的 ChatGPT/其他网页标签页改导航为 X，也不复用它。
-  if (tab && !/^https?:\\/\\/([a-z0-9-]+\\.)*x\\.com(?::[0-9]+)?(?:[\\/?#]|$)/i.test(String(tab.url || ""))) {
+  if (tab && !/^https?:\/\/([a-z0-9-]+\\.)*x\\.com(?::[0-9]+)?(?:[\/?#]|$)/i.test(String(tab.url || ""))) {
     await chrome.storage.local.remove(AUTOMATION_TAB_STORAGE_KEY);
     tab = null;
   }
   const reused = Boolean(tab);
   if (tab) {
     const current = new URL(String(tab.url || "https://x.com/home"));
-    const path = current.pathname.replace(/\\/$/, "") || "/";
+    const path = current.pathname.replace(/\/$/, "") || "/";
     if (path !== "/home") {
       await chrome.tabs.update(tab.id, { url: "https://x.com/home", active: false });
     }
@@ -236,7 +236,7 @@ async function openAutomationWindow() {
     await chrome.storage.local.set({ [AUTOMATION_TAB_STORAGE_KEY]: tab.id });
   }
   tab = await waitForAutomationTabReady(tab.id);
-  if (!/^https?:\\/\\/([a-z0-9-]+\\.)*x\\.com(?::[0-9]+)?(?:[\\/?#]|$)/i.test(String(tab.url || ""))) {
+  if (!/^https?:\/\/([a-z0-9-]+\\.)*x\\.com(?::[0-9]+)?(?:[\/?#]|$)/i.test(String(tab.url || ""))) {
     throw new Error("AUTOMATION_TAB_WRONG_HOST: 自动化标签页不是 X；tab_id=" + tab.id + "，url=" + String(tab.url || "无"));
   }
   return {
@@ -255,7 +255,7 @@ async function requireAutomationTab() {
     throw new Error("AUTOMATION_WINDOW_NOT_OPEN: 尚未打开独立 X 自动化窗口");
   }
   const url = String(tab.url || "");
-  if (!/^https?:\\/\\/([a-z0-9-]+\\.)*x\\.com(?::[0-9]+)?(?:[\\/?#]|$)/i.test(url)) {
+  if (!/^https?:\/\/([a-z0-9-]+\\.)*x\\.com(?::[0-9]+)?(?:[\/?#]|$)/i.test(url)) {
     throw new Error("AUTOMATION_TAB_WRONG_HOST: 拒绝操作非 X 标签页；tab_id=" + tab.id + "，window_id=" + tab.windowId + "，title=" + String(tab.title || "无") + "，url=" + (url || "无"));
   }
   return tab;
