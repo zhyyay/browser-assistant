@@ -119,6 +119,8 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
             const tweetStart = tweetTextNode && articleText
               ? articleText.indexOf(tweetText)
               : -1;
+            // Only inspect the tweet header/context, not the body: a normal
+            // post discussing ads must not be mistaken for an advertisement.
             const headerText = tweetStart >= 0 ? articleText.slice(0, tweetStart) : "";
             const socialContext = compact(
               [...article.querySelectorAll('[data-testid="socialContext"]')]
@@ -126,22 +128,26 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
                 .join(" "),
               1000
             );
-            const disclosureText = [
-              articleText,
+            const metadataText = [
               ...[...article.querySelectorAll('[aria-label], [data-testid]')]
                 .map((node) => node.getAttribute("aria-label") || node.getAttribute("data-testid") || "")
             ].join(" ");
-            const isAd = /\\b(?:promoted|sponsored)\\b|推广内容|推广\s*|广告\s*|赞助内容/i.test(disclosureText);
+            const disclosureText = socialContext + " " + headerText + " " + metadataText;
+            const isAd = /\b(?:promoted|sponsored)\b|推广|广告|赞助内容/i.test(disclosureText);
             const replyContext = socialContext + " " + headerText;
-            const isDirectedReply = /(?:replying\\s+to|回复给|回复)\\s*@([A-Za-z0-9_]{1,15})/i.test(replyContext);
+            const isDirectedReply = /(?:replying\s+to|回复给|回复)\s*@([A-Za-z0-9_]{1,15})/i.test(replyContext);
             return isAd ? "advertisement" : isDirectedReply ? "directed_reply" : null;
           };
-          const eligibleArticles = articles
-            .map((article, index) => ({ article, index, excludedReason: classifyExcludedPost(article) }))
-            .filter((item) => !item.excludedReason);
-          const excludedCounts = articles.reduce((counts, article) => {
-            const reason = classifyExcludedPost(article);
-            if (reason) counts[reason] = (counts[reason] || 0) + 1;
+          const classifiedArticles = articles.map((article, index) => ({
+            article,
+            index,
+            excludedReason: classifyExcludedPost(article)
+          }));
+          const eligibleArticles = classifiedArticles.filter((item) => !item.excludedReason);
+          const excludedCounts = classifiedArticles.reduce((counts, item) => {
+            if (item.excludedReason) {
+              counts[item.excludedReason] = (counts[item.excludedReason] || 0) + 1;
+            }
             return counts;
           }, {});
           const parseMetric = (value) => {
