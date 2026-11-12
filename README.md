@@ -73,7 +73,7 @@ browser.scroll(500)?;
 
 ## 安全
 
-- 扩展仅声明当前功能需要的 `activeTab`、`scripting`、`tabs` 和 `nativeMessaging` 权限；不申请 `cookies`、`webRequest`、`debugger`、`history`、`downloads` 或广泛站点访问权限。
+- 扩展声明 `activeTab`、`scripting`、`tabs`、`nativeMessaging` 和 `debugger` 权限；其中 `debugger` 仅用于通过 Chrome DevTools Protocol 执行鼠标、键盘和滚动输入。不申请 `cookies`、`webRequest`、`history`、`downloads` 或广泛站点访问权限。
 - 扩展代码不调用 Cookie API，不读取 `document.cookie`、`localStorage` 或 `sessionStorage`；Native Host 不访问 Chrome 用户数据目录或浏览器 Cookie 数据库。
 - 扩展代码不包含向第三方发送页面数据的网络请求逻辑；网页自身为正常加载内容而发出的请求不属于扩展的数据上传。
 - Native Messaging Host 安装清单将 `allowed_origins` 限定为安装时传入的单个 Chrome 扩展 ID。安装脚本会校验扩展 ID 格式。
