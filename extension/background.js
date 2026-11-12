@@ -1320,7 +1320,27 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
     clear_first: true
   });
   const verified = await executeInPage("verify_x_reply_text", { post_id: postId, text: content }, tab.id);
-  if (!verified?.matches) throw new Error("REPLY_CONTENT_VERIFY_FAILED: 回复内容输入后校验不一致，未提交");
+  if (!verified?.matches) {
+    // This branch is strictly before the submit button is resolved or clicked.
+    // Close only the reply composer belonging to this exact post, then confirm
+    // it is gone before allowing the desktop runner to continue to another post.
+    let closeResult;
+    try {
+      closeResult = await executeInPage("close_x_reply_dialog", { post_id: postId }, tab.id);
+    } catch (error) {
+      closeResult = { closed: false, error: String(error?.message || error) };
+    }
+    if (!closeResult?.closed) {
+      throw new Error(
+        "REPLY_COMPOSER_CLOSE_FAILED: 回复文本校验失败且无法确认关闭当前回复框；" +
+        "未点击发送，必须停止自动化。close_result=" + JSON.stringify(closeResult)
+      );
+    }
+    throw new Error(
+      "REPLY_CONTENT_VERIFY_FAILED: 回复内容输入后校验不一致，未提交；" +
+      "COMPOSER_CLOSED=" + JSON.stringify(closeResult)
+    );
+  }
 
   const submit = await executeInPage("get_x_reply_submit_button_rect", { post_id: postId }, tab.id);
   const confirmTimeoutMs = Math.min(Math.max(Number(params.confirm_timeout_ms) || 8000, 3000), 15000);
