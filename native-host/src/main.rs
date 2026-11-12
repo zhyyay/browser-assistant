@@ -19,7 +19,7 @@ use uuid::Uuid;
 const MAX_MESSAGE_SIZE: usize = 8 * 1024 * 1024;
 const ALLOWED_ACTIONS: &[&str] = &[
     "open_automation_window", "get_page_info", "reload_page", "get_dom_text", "find_elements", "get_x_posts", "post_x_tweet", "reply_to_x_post", "get_following",
-    "get_element_rect", "click", "type_text", "scroll",
+    "get_element_rect", "click", "type_text", "scroll", "scroll_automation",
 ];
 
 enum HostEvent {
@@ -226,6 +226,7 @@ fn page_action_name(command: &BrowserCommand) -> Option<&'static str> {
         BrowserCommand::Click { .. } => Some("click"),
         BrowserCommand::TypeText { .. } => Some("type_text"),
         BrowserCommand::Scroll { .. } => Some("scroll"),
+        BrowserCommand::ScrollAutomation { .. } => Some("scroll_automation"),
         BrowserCommand::Ping | BrowserCommand::AuthorizeCommand { .. } => None,
     }
 }
