@@ -240,11 +240,16 @@ async function openAutomationWindow() {
   };
 }
 
+async function requireAutomationTab() {
+  const tab = await getAutomationTab();
+  if (!tab?.id) {
+    throw new Error("AUTOMATION_WINDOW_NOT_OPEN: 尚未打开独立 X 自动化窗口");
+  }
+  return tab;
+}
+
 async function getActiveTab() {
-  const automationTab = await getAutomationTab();
-  const [tab] = automationTab
-    ? [automationTab]
-    : await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (!tab?.id || !tab.url || !/^https?:\/\//i.test(tab.url)) {
     const tabId = Number.isInteger(tab?.id) ? tab.id : "无";
     const title = String(tab?.title || "无").replace(/\s+/g, " ").slice(0, 120);
@@ -279,6 +284,11 @@ async function navigateTab(tabId, url) {
     throw new Error("仅允许导航到 HTTP/HTTPS 页面");
   }
   await chrome.tabs.update(tabId, { url });
+}
+
+async function executeAutomationInPage(command, params = {}) {
+  const tab = await requireAutomationTab();
+  return executeInPage(command, params, tab.id);
 }
 
 async function executeInPage(command, params = {}, fixedTabId = null) {
@@ -1089,7 +1099,7 @@ async function enterXComposer(tabId, strategy) {
 }
 
 async function executePostXTweet(params = {}, fixedTabId = null) {
-  const tab = fixedTabId === null ? await getActiveTab() : await chrome.tabs.get(fixedTabId);
+  const tab = fixedTabId === null ? await requireAutomationTab() : await chrome.tabs.get(fixedTabId);
   const initialUrl = new URL(tab.url || "");
   if (initialUrl.hostname !== "x.com") {
     throw new Error("PAGE_CHANGED: 请先在 X 页面登录并打开任意 X 页面");
@@ -1503,7 +1513,7 @@ function handleNativeMessage(message) {
       try {
         const allowed = new Set([
           "open_automation_window", "get_page_info", "reload_page", "get_dom_text", "find_elements", "get_x_posts", "post_x_tweet", "reply_to_x_post", "get_following",
-          "get_element_rect", "click", "type_text", "scroll"
+          "get_element_rect", "click", "type_text", "scroll", "scroll_automation"
         ]);
         if (!allowed.has(message.command)) throw new Error("unsupported desktop command: " + message.command);
         const result = message.command === "open_automation_window"
@@ -1514,7 +1524,11 @@ function handleNativeMessage(message) {
             ? await executePostXTweet(message.params || {})
             : message.command === "reply_to_x_post"
               ? await executeReplyToXPost(message.params || {})
-              : await executeInPage(message.command, message.params || {});
+              : message.command === "get_x_posts"
+                ? await executeAutomationInPage("get_x_posts", message.params || {})
+                : message.command === "scroll_automation"
+                  ? await executeAutomationInPage("scroll", message.params || {})
+                  : await executeInPage(message.command, message.params || {});
         nativePort?.postMessage({ id: message.id, ok: true, result });
       } catch (error) {
         nativePort?.postMessage({ id: message.id, ok: false, error: error.message || String(error) });
@@ -1583,7 +1597,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
             ? await executePostXTweet(message.params || {})
             : message.command === "reply_to_x_post"
               ? await executeReplyToXPost(message.params || {})
-              : await executeInPage(message.command, message.params || {});
+              : message.command === "get_x_posts"
+                ? await executeAutomationInPage("get_x_posts", message.params || {})
+                : message.command === "scroll_automation"
+                  ? await executeAutomationInPage("scroll", message.params || {})
+                  : await executeInPage(message.command, message.params || {});
         sendResponse({ ok: true, result, authorized_by: "rust-native-host" });
         return;
       }
