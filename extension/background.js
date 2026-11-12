@@ -189,6 +189,18 @@ async function getAutomationTab() {
   }
 }
 
+async function waitForAutomationTabReady(tabId, timeoutMs = 30000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const tab = await chrome.tabs.get(tabId);
+    if (tab.status === "complete" && /^https?:\\/\\//i.test(String(tab.url || ""))) {
+      return tab;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+  throw new Error("AUTOMATION_PAGE_LOAD_TIMEOUT: 等待独立 X 窗口加载超过 30 秒");
+}
+
 async function openAutomationWindow() {
   let tab = await getAutomationTab();
   const reused = Boolean(tab);
@@ -208,6 +220,7 @@ async function openAutomationWindow() {
     if (!tab?.id) throw new Error("AUTOMATION_WINDOW_CREATE_FAILED: Chrome 未返回自动化窗口标签页");
     await chrome.storage.local.set({ [AUTOMATION_TAB_STORAGE_KEY]: tab.id });
   }
+  tab = await waitForAutomationTabReady(tab.id);
   return {
     opened: true,
     reused,
