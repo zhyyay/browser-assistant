@@ -608,7 +608,29 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
             throw new Error("CHALLENGE_DETECTED: 页面出现安全验证或账号访问限制，已停止扫描");
           }
           const limit = Math.min(Math.max(Number(params.limit) || 20, 1), 100);
-          const articles = [...document.querySelectorAll('article[data-testid="tweet"]')].slice(0, limit);
+          // X is a client-rendered SPA. A command can arrive while /home has
+          // navigated but React has not mounted the timeline yet. Never report
+          // a transient empty DOM as a valid zero-post timeline.
+          const timelineDeadline = Date.now() + 10000;
+          let articles = [...document.querySelectorAll('article[data-testid="tweet"]')].slice(0, limit);
+          while (articles.length === 0 && Date.now() < timelineDeadline) {
+            await new Promise((resolve) => setTimeout(resolve, 250));
+            articles = [...document.querySelectorAll('article[data-testid="tweet"]')].slice(0, limit);
+          }
+          if (articles.length === 0) {
+            const diagnostics = {
+              ready_state: document.readyState,
+              title: compact(document.title || "", 160),
+              body_text_length: String(document.body?.innerText || "").trim().length,
+              article_count: document.querySelectorAll('article[data-testid="tweet"]').length,
+              tweet_testid_count: document.querySelectorAll('[data-testid="tweet"]').length,
+              url: location.href
+            };
+            throw new Error(
+              "TIMELINE_NOT_READY: 等待 10 秒仍未发现时间线推文节点，拒绝把未加载页面当作 0 条推文；diagnostic=" +
+              JSON.stringify(diagnostics)
+            );
+          }
           // Exclude promoted content and replies addressed to another account
           // from the candidate JSON consumed by the automatic-reply workflow.
           const classifyExcludedPost = (article) => {
@@ -1634,9 +1656,32 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
       dialogs: Array.isArray(lastDialogState?.dialogs) ? lastDialogState.dialogs : [],
       composer_preserved: true
     });
+    // No text has been typed at this point. Try to close only the single
+    // visible reply dialog so the next timeline scan does not inherit a stale
+    // modal. close_x_reply_dialog refuses multiple dialogs and never closes
+    // the global post composer.
+    let cleanup = { attempted: true, closed: false, reason: "not_attempted" };
+    try {
+      const closed = await executeInPage("close_x_reply_dialog", { post_id: postId }, tab.id);
+      cleanup = {
+        attempted: true,
+        closed: Boolean(closed?.closed),
+        already_closed: Boolean(closed?.already_closed),
+        method: String(closed?.method || ""),
+        reason: String(closed?.reason || "")
+      };
+    } catch (error) {
+      cleanup = {
+        attempted: true,
+        closed: false,
+        reason: String(error?.message || error).slice(0, 300)
+      };
+    }
+    traceStage("reply_dialog_timeout_cleanup", "info", cleanup);
     throw new Error(
-      "REPLY_EDITOR_TIMEOUT: 等待目标推文回复编辑框超时；已保留页面和回复窗口，未点击发送；" +
+      "REPLY_EDITOR_TIMEOUT: 等待目标推文回复编辑框超时；未输入回复、未点击发送；" +
       "dialog_state=" + JSON.stringify(lastDialogState) +
+      "；cleanup=" + JSON.stringify(cleanup) +
       "；diagnostic=" + diagnostic
     );
   }
