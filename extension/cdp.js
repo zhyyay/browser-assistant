@@ -361,15 +361,70 @@ async function typeTextBySelector(tabId, params) {
     );
   }
 
+  // DOM.focus is not consistently sufficient for X's React contenteditable.
+  // First focus the exact node, then verify that the active element is either
+  // the editor itself or a descendant (some editor variants focus an inner node).
   await send(tabId, "DOM.focus", { nodeId: nodeIds[0] }, nextCommandTimeout());
-  await sleep(80);
-  const focusCheck = await send(tabId, "Runtime.evaluate", {
-    expression: "document.activeElement?.matches(" + JSON.stringify(selector) + ") === true",
-    returnByValue: true,
-    awaitPromise: false
-  }, nextCommandTimeout());
-  if (focusCheck?.result?.value !== true) {
-    throw new Error("CDP_EDITOR_FOCUS_FAILED: CDP 未能确认焦点位于目标回复编辑框");
+  await sleep(120);
+
+  const inspectFocus = async () => {
+    const checked = await send(tabId, "Runtime.evaluate", {
+      expression: `(() => {
+        const editor = document.querySelector(${JSON.stringify(selector)});
+        const active = document.activeElement;
+        const focused = Boolean(editor && active &&
+          (active === editor || editor.contains(active) || active.closest?.(${JSON.stringify(selector)}) === editor));
+        return {
+          focused,
+          editor_found: Boolean(editor),
+          editor_connected: Boolean(editor?.isConnected),
+          editor_contenteditable: editor?.getAttribute("contenteditable") || null,
+          active_tag: active?.tagName || null,
+          active_testid: active?.getAttribute?.("data-testid") || null,
+          active_is_body: active === document.body,
+          document_has_focus: document.hasFocus()
+        };
+      })()`,
+      returnByValue: true,
+      awaitPromise: false
+    }, nextCommandTimeout());
+    return checked?.result?.value || null;
+  };
+
+  let focusState = await inspectFocus();
+
+  // If programmatic focus did not stick, click the center of the exact
+  // uniquely-marked editor through CDP's trusted input path. The selector
+  // still scopes the target; never fall back to a global composer.
+  if (!focusState?.focused) {
+    const box = await send(tabId, "DOM.getBoxModel", {
+      nodeId: nodeIds[0]
+    }, nextCommandTimeout());
+    const quad = box?.model?.content;
+    if (Array.isArray(quad) && quad.length >= 8) {
+      const xs = [quad[0], quad[2], quad[4], quad[6]];
+      const ys = [quad[1], quad[3], quad[5], quad[7]];
+      const x = (Math.min(...xs) + Math.max(...xs)) / 2;
+      const y = (Math.min(...ys) + Math.max(...ys)) / 2;
+      await send(tabId, "Input.dispatchMouseEvent", {
+        type: "mouseMoved", x, y
+      }, nextCommandTimeout());
+      await send(tabId, "Input.dispatchMouseEvent", {
+        type: "mousePressed", x, y, button: "left", clickCount: 1
+      }, nextCommandTimeout());
+      await send(tabId, "Input.dispatchMouseEvent", {
+        type: "mouseReleased", x, y, button: "left", clickCount: 1
+      }, nextCommandTimeout());
+      await sleep(160);
+      focusState = await inspectFocus();
+    }
+  }
+
+  if (!focusState?.focused) {
+    throw new Error(
+      "CDP_EDITOR_FOCUS_FAILED: 无法确认目标回复编辑框获得焦点；diagnostic=" +
+      JSON.stringify(focusState || { evaluation_result_missing: true })
+    );
   }
 
   if (params.clear_first !== false) {
