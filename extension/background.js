@@ -875,7 +875,33 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
           if (editor.getAttribute("aria-disabled") === "true" || editor.getAttribute("contenteditable") === "false") {
             throw new Error("REPLY_EDITOR_DISABLED: 回复编辑框当前不可用");
           }
-          return { ...rectOf(editor), post_id: postId, dialog_found: true, matched_post: Boolean(located.matched_post), match_strategy: located.match_strategy || "unknown" };
+          const inputToken = String(params.input_token || "");
+          let inputSelector = null;
+          if (inputToken) {
+            if (!/^[a-f0-9-]{36}$/i.test(inputToken)) {
+              throw new Error("REPLY_EDITOR_TOKEN_INVALID: 回复编辑框定位令牌无效");
+            }
+            // Give the exact, already-scoped editor a one-use DOM anchor. CDP
+            // will resolve this selector and focus the node directly, avoiding
+            // coordinate clicks that can land on an overlay or adjacent composer.
+            editor.setAttribute("data-browser-assistant-input", inputToken);
+            inputSelector = '[data-browser-assistant-input="' + inputToken + '"]';
+          }
+          return {
+            ...rectOf(editor),
+            post_id: postId,
+            dialog_found: true,
+            matched_post: Boolean(located.matched_post),
+            match_strategy: located.match_strategy || "unknown",
+            input_selector: inputSelector
+          };
+        }
+        case "clear_x_reply_editor_marker": {
+          const inputToken = String(params.input_token || "");
+          if (!/^[a-f0-9-]{36}$/i.test(inputToken)) return { cleared: false, reason: "invalid_token" };
+          const editor = document.querySelector('[data-browser-assistant-input="' + inputToken + '"]');
+          if (editor) editor.removeAttribute("data-browser-assistant-input");
+          return { cleared: Boolean(editor) };
         }
         case "verify_x_reply_text": {
           const postId = String(params.post_id || "");
@@ -1616,13 +1642,26 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
   }
 
   await pause(700);
-  await runPacedInput("type_reply_text", {
-    action: "type_text",
-    x: editor.viewport_x + editor.width / 2,
-    y: editor.viewport_y + editor.height / 2,
-    text: content,
-    clear_first: true
-  });
+  const inputToken = crypto.randomUUID();
+  // Re-resolve the editor inside the verified reply dialog and mark only that
+  // node. CDP focuses this exact DOM node and sends trusted keyboard/input
+  // events, following chrome-use's scoped-locator -> fill -> verify pattern.
+  editor = await runStage("prepare_reply_editor_input", () =>
+    executeInPage("get_x_reply_editor_rect", { post_id: postId, input_token: inputToken }, tab.id)
+  );
+  if (!editor?.input_selector) {
+    throw new Error("REPLY_EDITOR_SELECTOR_MISSING: 无法为目标回复编辑框创建唯一定位器");
+  }
+  try {
+    await runPacedInput("type_reply_text", {
+      action: "type_text_selector",
+      selector: editor.input_selector,
+      text: content,
+      clear_first: true
+    });
+  } finally {
+    await executeInPage("clear_x_reply_editor_marker", { input_token: inputToken }, tab.id).catch(() => {});
+  }
   // Give X time to reconcile the contenteditable DOM and its React state
   // before reading the draft back.
   await pause(650);
