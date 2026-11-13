@@ -843,12 +843,61 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
           if (!article) {
             throw new Error("POST_NOT_FOUND_OR_AMBIGUOUS: 当前时间线中找不到自身状态 ID 完全匹配的推文；拒绝使用引用推文链接或列表序号猜测目标。post_id=" + postId);
           }
-          // 先滚动整条目标帖子，再重新从 DOM 定位，避免虚拟列表更新后沿用旧节点/旧坐标。
-          article.scrollIntoView({ block: "center", inline: "nearest", behavior: "auto" });
-          await new Promise((resolve) => setTimeout(resolve, 350));
+          // 使用浏览器原生平滑滚动把目标帖子带入视口。这里是为了避免
+          // 瞬间跳动后页面尚未完成布局就读取旧坐标，不用于伪装人工操作。
+          article.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" });
+
+          // 等待目标帖子的位置连续稳定，再重新从 DOM 获取节点和按钮坐标。
+          // X 是虚拟列表页面，滚动期间可能替换 article 节点，不能复用旧引用。
+          const scrollSettleStarted = performance.now();
+          let previousRect = null;
+          let stableFrames = 0;
+          let finalRect = null;
+          while (performance.now() - scrollSettleStarted < 2500 && stableFrames < 4) {
+            await new Promise((resolve) => requestAnimationFrame(() =>
+              requestAnimationFrame(resolve)
+            ));
+            const currentArticle = findTargetArticle();
+            if (!currentArticle || ownPostId(currentArticle) !== postId) {
+              previousRect = null;
+              stableFrames = 0;
+              continue;
+            }
+            const rect = currentArticle.getBoundingClientRect();
+            const currentRect = {
+              x: rect.x,
+              y: rect.y,
+              width: rect.width,
+              height: rect.height
+            };
+            if (previousRect &&
+                Math.abs(currentRect.x - previousRect.x) <= 1 &&
+                Math.abs(currentRect.y - previousRect.y) <= 1 &&
+                Math.abs(currentRect.width - previousRect.width) <= 1 &&
+                Math.abs(currentRect.height - previousRect.height) <= 1) {
+              stableFrames++;
+            } else {
+              stableFrames = 0;
+            }
+            previousRect = currentRect;
+            finalRect = currentRect;
+          }
+          if (stableFrames < 4) {
+            throw new Error(
+              "TARGET_POST_SCROLL_NOT_STABLE: 等待目标推文滚动和布局稳定超时；post_id=" +
+              postId + "；stable_frames=" + stableFrames
+            );
+          }
           article = findTargetArticle();
           if (!article || ownPostId(article) !== postId) {
             throw new Error("POST_ID_CHANGED_AFTER_SCROLL: 滚动后无法再次确认目标推文 ID，拒绝点击回复。expected=" + postId);
+          }
+          const settledRect = article.getBoundingClientRect();
+          if (settledRect.bottom <= 0 || settledRect.top >= window.innerHeight) {
+            throw new Error(
+              "TARGET_POST_OUTSIDE_VIEWPORT: 等待滚动完成后目标推文仍不在视口内；post_id=" + postId +
+              "；rect=" + JSON.stringify(finalRect)
+            );
           }
           const button = article.querySelector('[data-testid="reply"]');
           if (!button || !isVisible(button) || button.getAttribute("aria-disabled") === "true") {
