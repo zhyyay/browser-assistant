@@ -466,10 +466,28 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
         }
 
         const composerDialogs = replyDialogs
-          .map((dialog) => ({ dialog, editor: findReplyEditor(dialog) }))
+          .map((dialog) => ({ dialog, editor: findReplyEditor(dialog), submit: getReplySubmitButton(dialog) }))
           .filter((item) => item.editor);
-        if (composerDialogs.length === 1) {
-          return { ...composerDialogs[0], matched_post: false, match_strategy: "single_reply_dialog_unmatched", visible_dialog_count: dialogs.length, reply_dialog_count: replyDialogs.length, visible_editor_count: editors.length };
+        // The reply action was initiated only after get_x_reply_button_rect
+        // resolved the exact post ID and the caller clicked that button. X
+        // may omit the target status permalink from its modal DOM, so in that
+        // case accept only one visible reply dialog, one visible editor, and
+        // a reply-specific submit control inside that same dialog. This
+        // preserves the click-to-dialog association without guessing among
+        // multiple composers or accepting the global post composer.
+        if (composerDialogs.length === 1 &&
+            editors.length === 1 &&
+            composerDialogs[0].submit &&
+            ( /回复|^reply$/i.test(getSubmitLabel(composerDialogs[0].submit)) ||
+              composerDialogs[0].submit.getAttribute("data-testid") === "tweetButtonInline" )) {
+          return {
+            ...composerDialogs[0],
+            matched_post: true,
+            match_strategy: "single_reply_dialog_after_exact_target_click",
+            visible_dialog_count: dialogs.length,
+            reply_dialog_count: replyDialogs.length,
+            visible_editor_count: editors.length
+          };
         }
         return { dialog: null, editor: null, matched_post: false, match_strategy: "no_safe_match", visible_dialog_count: dialogs.length, reply_dialog_count: replyDialogs.length, visible_editor_count: editors.length };
       };
