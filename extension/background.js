@@ -406,9 +406,12 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
       const isReplyDialog = (dialog, postId = "") => {
         const button = getReplySubmitButton(dialog);
         const label = getSubmitLabel(button);
-        if (button && label) {
-          // An explicit "Post/发帖" action is never a reply dialog.
-          return /回复|^reply$/i.test(label);
+        if (button) {
+          // X may use the generic tweetButton test ID in reply dialogs, but
+          // tweetButtonInline is reply-specific even when its accessible label
+          // is missing or localized unexpectedly.
+          if (button.getAttribute("data-testid") === "tweetButtonInline") return true;
+          if (label) return /回复|^reply$/i.test(label);
         }
         // Some X variants omit visible button text. In that case only accept
         // a modal that contains the exact target status and a visible editor.
@@ -1464,6 +1467,15 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
       lastDialogState = await runStage("inspect_reply_editor", () =>
         executeInPage("inspect_x_reply_dialog", { post_id: postId }, tab.id)
       );
+      traceStage("inspect_reply_editor_state", "info", {
+        editor_found: Boolean(lastDialogState?.editor_found),
+        matched_post: Boolean(lastDialogState?.matched_post),
+        match_strategy: String(lastDialogState?.match_strategy || "unknown"),
+        visible_dialog_count: Number(lastDialogState?.visible_dialog_count || 0),
+        reply_dialog_count: Number(lastDialogState?.reply_dialog_count || 0),
+        visible_editor_count: Number(lastDialogState?.visible_editor_count || 0),
+        dialogs: Array.isArray(lastDialogState?.dialogs) ? lastDialogState.dialogs : []
+      });
       if (lastDialogState?.editor_found) {
         editor = await runStage("resolve_reply_editor_rect", () =>
           executeInPage("get_x_reply_editor_rect", { post_id: postId }, tab.id)
@@ -1479,18 +1491,25 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   if (!editor) {
-    let closeResult = null;
-    try {
-      closeResult = await closeReplyComposerSafely(tab.id, postId);
-    } catch (closeError) {
-      closeResult = { closed: false, error: String(closeError?.message || closeError) };
-    }
+    // Never dismiss a reply composer on an editor-detection timeout. The
+    // exact target reply button was already resolved and clicked; preserve
+    // the visible UI so the user can inspect/recover it and so diagnostics
+    // are not destroyed by an automatic Escape/close action.
     const diagnostic = String(lastError?.message || lastError || "none");
+    traceStage("reply_editor_wait_timeout", "info", {
+      editor_found: Boolean(lastDialogState?.editor_found),
+      matched_post: Boolean(lastDialogState?.matched_post),
+      match_strategy: String(lastDialogState?.match_strategy || "unknown"),
+      visible_dialog_count: Number(lastDialogState?.visible_dialog_count || 0),
+      reply_dialog_count: Number(lastDialogState?.reply_dialog_count || 0),
+      visible_editor_count: Number(lastDialogState?.visible_editor_count || 0),
+      dialogs: Array.isArray(lastDialogState?.dialogs) ? lastDialogState.dialogs : [],
+      composer_preserved: true
+    });
     throw new Error(
-      "REPLY_EDITOR_TIMEOUT: 等待目标推文回复编辑框超时；" +
+      "REPLY_EDITOR_TIMEOUT: 等待目标推文回复编辑框超时；已保留页面和回复窗口，未点击发送；" +
       "dialog_state=" + JSON.stringify(lastDialogState) +
-      "；diagnostic=" + diagnostic +
-      "；close_result=" + JSON.stringify(closeResult)
+      "；diagnostic=" + diagnostic
     );
   }
 
