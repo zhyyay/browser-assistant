@@ -2,9 +2,22 @@ const output = document.querySelector("#output");
 const status = document.querySelector("#status");
 
 async function send(message) {
-  const response = await chrome.runtime.sendMessage(message);
-  output.textContent = JSON.stringify(response, null, 2);
-  return response;
+  try {
+    const response = await chrome.runtime.sendMessage(message);
+    output.textContent = JSON.stringify(response, null, 2);
+    return response;
+  } catch (error) {
+    const response = {
+      ok: false,
+      error: error?.message || String(error),
+      code: "MESSAGE_DELIVERY_FAILED",
+      hint: "请确认扩展已启用，并检查 Service Worker 是否正在运行；不要在 Service Worker 控制台用 runtime.sendMessage 给自己发消息。"
+    };
+    output.textContent = JSON.stringify(response, null, 2);
+    status.textContent = "扩展消息发送失败";
+    console.error("[Browser Assistant] extension message delivery failed", error);
+    return response;
+  }
 }
 
 document.querySelector("#connect").addEventListener("click", async () => {
