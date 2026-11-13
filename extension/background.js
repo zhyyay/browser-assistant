@@ -1118,7 +1118,113 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
           return { url: location.href, title: document.title, ready_state: document.readyState };
         case "get_dom_text": {
           const max = Math.min(Math.max(Number(params.max_chars) || 12000, 1), 50000);
-          return { text: compact(document.body?.innerText || "", max) };
+          const text = compact(document.body?.innerText || "", max);
+          if (params.snapshot !== true) return { text };
+
+          // Bounded, read-only semantic DOM snapshot inspired by chrome-use.
+          // Refs are valid only for this snapshot; callers must capture again
+          // after navigation or any page update before using them.
+          const maxNodes = Math.min(Math.max(Number(params.max_nodes) || 180, 20), 500);
+          const maxDepth = Math.min(Math.max(Number(params.max_depth) || 8, 2), 16);
+          const isVisibleSnapshotNode = (element) => {
+            if (!(element instanceof Element)) return false;
+            const rect = element.getBoundingClientRect();
+            const style = getComputedStyle(element);
+            return rect.width > 0 && rect.height > 0 &&
+              style.visibility !== "hidden" && style.display !== "none" &&
+              style.opacity !== "0";
+          };
+          const inferRole = (element) => {
+            const explicit = element.getAttribute("role");
+            if (explicit) return explicit.split(/\\s+/)[0];
+            const tag = element.tagName.toLowerCase();
+            if (tag === "button") return "button";
+            if (tag === "a" && element.hasAttribute("href")) return "link";
+            if (tag === "textarea" || (tag === "input" && !/^(hidden|submit|button|reset)$/i.test(element.type))) return "textbox";
+            if (/^h[1-6]$/.test(tag)) return "heading";
+            if (tag === "article") return "article";
+            if (tag === "nav") return "navigation";
+            if (tag === "main") return "main";
+            if (tag === "time") return "time";
+            return null;
+          };
+          const accessibleName = (element) => {
+            const labelledBy = element.getAttribute("aria-labelledby");
+            const labelledText = labelledBy
+              ? labelledBy.split(/\\s+/).map((id) => document.getElementById(id)?.innerText || "").join(" ")
+              : "";
+            return compact(
+              element.getAttribute("aria-label") ||
+              labelledText ||
+              element.getAttribute("alt") ||
+              element.getAttribute("title") ||
+              (["BUTTON", "A", "TIME"].includes(element.tagName) ? element.innerText : ""),
+              180
+            );
+          };
+          const wanted = (element) => {
+            const tag = element.tagName.toLowerCase();
+            return tag === "article" || tag === "button" || tag === "a" ||
+              tag === "time" || /^h[1-6]$/.test(tag) ||
+              element.hasAttribute("data-testid") ||
+              element.hasAttribute("role") ||
+              element.hasAttribute("aria-label") ||
+              element.isContentEditable;
+          };
+          const candidates = [...document.querySelectorAll("article, button, a, time, h1, h2, h3, h4, h5, h6, [data-testid], [role], [aria-label], [contenteditable='true']")]
+            .filter((element) => wanted(element) && isVisibleSnapshotNode(element))
+            .slice(0, maxNodes);
+          const candidateSet = new Set(candidates);
+          const refs = new Map(candidates.map((element, index) => [element, "e" + (index + 1)]));
+          const nodes = candidates.map((element) => {
+            let parent = element.parentElement;
+            let depth = 0;
+            while (parent && parent !== document.body && depth < maxDepth && !candidateSet.has(parent)) {
+              parent = parent.parentElement;
+              depth++;
+            }
+            const rect = element.getBoundingClientRect();
+            const attrs = {};
+            for (const name of ["data-testid", "role", "aria-label", "aria-labelledby", "href", "datetime", "contenteditable", "tabindex"]) {
+              const value = element.getAttribute(name);
+              if (value !== null) attrs[name] = name === "href"
+                ? (() => { try { const url = new URL(value, location.origin); return url.origin === location.origin ? url.pathname + url.search : url.origin; } catch { return ""; } })()
+                : compact(value, 180);
+            }
+            return {
+              ref: refs.get(element),
+              parent_ref: refs.get(parent) || null,
+              depth: Math.min(depth, maxDepth),
+              tag: element.tagName.toLowerCase(),
+              role: inferRole(element),
+              name: accessibleName(element),
+              text: compact(element.innerText || element.textContent || "", 260),
+              attributes: attrs,
+              bounds: {
+                x: Math.round(rect.x),
+                y: Math.round(rect.y),
+                width: Math.round(rect.width),
+                height: Math.round(rect.height)
+              }
+            };
+          });
+          return {
+            text,
+            snapshot: {
+              url: location.href,
+              title: document.title,
+              captured_at: new Date().toISOString(),
+              node_count: nodes.length,
+              truncated: candidates.length >= maxNodes,
+              counts: {
+                article: document.querySelectorAll("article").length,
+                article_with_tweet_testid: document.querySelectorAll('article[data-testid="tweet"]').length,
+                tweet_text_testid: document.querySelectorAll('[data-testid="tweetText"]').length,
+                status_links: document.querySelectorAll('a[href*="/status/"]').length
+              },
+              nodes
+            }
+          };
         }
         case "find_elements": {
           const selector = String(params.selector || "");
