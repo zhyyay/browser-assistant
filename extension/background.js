@@ -1286,7 +1286,9 @@ async function executePostXTweet(params = {}, fixedTabId = null) {
 
   const content = String(params.text ?? "").trim();
   if (!content) throw new Error("INVALID_CONTENT: 发帖内容不能为空");
-  const pageState = await executeInPage("get_dom_text", { max_chars: 16000 }, tab.id);
+  const pageState = await runStage("inspect_page_state", () =>
+    executeInPage("get_dom_text", { max_chars: 16000 }, tab.id)
+  );
   if (/rate limit exceeded|too many requests|try again later|请求过于频繁|操作过于频繁|暂时限制了部分功能/i.test(pageState?.text || "")) {
     throw new Error("RATE_LIMITED: 检测到 X 限流提示，未提交发帖");
   }
@@ -1337,16 +1339,31 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
 
   const interactionTrace = [];
   const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-  const runPacedInput = async (stage, input) => {
-    const started = performance.now();
-    const result = await performCdpInput(input, tab.id);
-    interactionTrace.push({
-      stage,
-      elapsed_ms: Math.round(performance.now() - started),
-      ...result
-    });
-    return result;
+  const traceStage = (stage, phase, extra = {}) => {
+    const entry = { stage, phase, at: new Date().toISOString(), ...extra };
+    console.info("[Browser Assistant][X Reply]", entry);
+    interactionTrace.push(entry);
   };
+  const runStage = async (stage, operation) => {
+    const started = performance.now();
+    traceStage(stage, "start");
+    try {
+      const result = await operation();
+      traceStage(stage, "done", { elapsed_ms: Math.round(performance.now() - started) });
+      return result;
+    } catch (error) {
+      const message = String(error?.message || error);
+      traceStage(stage, "failed", {
+        elapsed_ms: Math.round(performance.now() - started),
+        error: message.slice(0, 500)
+      });
+      throw new Error("REPLY_STAGE_FAILED: " + stage + ": " + message);
+    }
+  };
+  const runPacedInput = async (stage, input) => runStage(stage, async () => {
+    const result = await performCdpInput(input, tab.id);
+    return result;
+  });
 
   const pageState = await executeInPage("get_dom_text", { max_chars: 16000 }, tab.id);
   if (/rate limit exceeded|too many requests|try again later|请求过于频繁|操作过于频繁|暂时限制了部分功能/i.test(pageState?.text || "")) {
@@ -1360,7 +1377,9 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
   }
 
   // Resolve the exact post by its own status ID; never fall back to list index or guessed coordinates.
-  const replyButton = await executeInPage("get_x_reply_button_rect", { post_id: postId }, tab.id);
+  const replyButton = await runStage("resolve_target_post", () =>
+    executeInPage("get_x_reply_button_rect", { post_id: postId }, tab.id)
+  );
   const resolvedPostId = String(replyButton?.resolved_post_id || replyButton?.post_id || "");
   if (resolvedPostId !== postId) {
     throw new Error(
@@ -1390,9 +1409,13 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
   const editorDeadline = Date.now() + 15000;
   while (Date.now() < editorDeadline) {
     try {
-      lastDialogState = await executeInPage("inspect_x_reply_dialog", { post_id: postId }, tab.id);
+      lastDialogState = await runStage("inspect_reply_editor", () =>
+        executeInPage("inspect_x_reply_dialog", { post_id: postId }, tab.id)
+      );
       if (lastDialogState?.editor_found) {
-        editor = await executeInPage("get_x_reply_editor_rect", { post_id: postId }, tab.id);
+        editor = await runStage("resolve_reply_editor_rect", () =>
+          executeInPage("get_x_reply_editor_rect", { post_id: postId }, tab.id)
+        );
         break;
       }
     } catch (error) {
@@ -1427,7 +1450,9 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
     text: content,
     clear_first: true
   });
-  const verified = await executeInPage("verify_x_reply_text", { post_id: postId, text: content }, tab.id);
+  const verified = await runStage("verify_reply_text", () =>
+    executeInPage("verify_x_reply_text", { post_id: postId, text: content }, tab.id)
+  );
   if (!verified?.matches) {
     // This branch is strictly before the submit button is resolved or clicked.
     // Close only the reply composer belonging to this exact post, then confirm
@@ -1450,7 +1475,9 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
     );
   }
 
-  const submit = await executeInPage("get_x_reply_submit_button_rect", { post_id: postId }, tab.id);
+  const submit = await runStage("resolve_submit_button", () =>
+    executeInPage("get_x_reply_submit_button_rect", { post_id: postId }, tab.id)
+  );
   const confirmTimeoutMs = Math.min(Math.max(Number(params.confirm_timeout_ms) || 8000, 3000), 15000);
 
   // Arm network observation before the single submit click. Failure to observe
@@ -1469,10 +1496,10 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
   });
 
   const networkPromise = networkCapture.wait();
-  const pagePromise = executeInPage("wait_x_reply_confirmation", {
+  const pagePromise = runStage("wait_send_confirmation", () => executeInPage("wait_x_reply_confirmation", {
     post_id: postId,
     confirm_timeout_ms: confirmTimeoutMs
-  }, tab.id);
+  }, tab.id));
   const firstConfirmation = await Promise.race([
     networkPromise.then(
       (result) => ({ source: "network", result }),
