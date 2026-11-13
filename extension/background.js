@@ -1238,17 +1238,6 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
 }
 
 
-const POST_ENTRY_STRATEGIES = ["home_click", "compose_url", "home_top"];
-
-function shuffled(values) {
-  const result = [...values];
-  for (let index = result.length - 1; index > 0; index--) {
-    const target = Math.floor(Math.random() * (index + 1));
-    [result[index], result[target]] = [result[target], result[index]];
-  }
-  return result;
-}
-
 async function waitForXComposer(tabId, timeoutMs = 12000) {
   const deadline = Date.now() + timeoutMs;
   let lastError = null;
@@ -1318,7 +1307,7 @@ async function executePostXTweet(params = {}, fixedTabId = null) {
     throw new Error("PAGE_CHANGED: 请先在 X 页面登录并打开任意 X 页面");
   }
 
-  const strategies = shuffled(POST_ENTRY_STRATEGIES);
+  const strategies = ["compose_url"];
   const attempts = [];
   let selectedStrategy = null;
   for (const strategy of strategies) {
