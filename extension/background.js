@@ -1136,7 +1136,7 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
           };
           const inferRole = (element) => {
             const explicit = element.getAttribute("role");
-            if (explicit) return explicit.split(/\\s+/)[0];
+            if (explicit) return explicit.split(/\s+/)[0];
             const tag = element.tagName.toLowerCase();
             if (tag === "button") return "button";
             if (tag === "a" && element.hasAttribute("href")) return "link";
@@ -1151,7 +1151,7 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
           const accessibleName = (element) => {
             const labelledBy = element.getAttribute("aria-labelledby");
             const labelledText = labelledBy
-              ? labelledBy.split(/\\s+/).map((id) => document.getElementById(id)?.innerText || "").join(" ")
+              ? labelledBy.split(/\s+/).map((id) => document.getElementById(id)?.innerText || "").join(" ")
               : "";
             return compact(
               element.getAttribute("aria-label") ||
