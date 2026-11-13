@@ -1601,16 +1601,16 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
     author_username: String(replyButton?.author_username || ""),
     post_text: String(replyButton?.post_text || "").slice(0, 180)
   });
+  // Wait for the timeline render to settle before opening the reply composer.
+  await pause(450);
   await runPacedInput("open_reply_composer", {
     action: "click",
     x: replyButton.viewport_x + replyButton.width / 2,
     y: replyButton.viewport_y + replyButton.height / 2,
     clear_first: false
   });
-  // Keep the interaction deliberately human-paced. The CDP typing itself is fast,
-  // but the page needs time to finish opening the composer and updating X's
-  // internal editor state before we inspect it.
-  await pause(900);
+  // Allow X to finish mounting the exact reply dialog before inspecting it.
+  await pause(1400);
 
   let editor = null;
   let lastError = null;
