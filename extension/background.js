@@ -851,10 +851,32 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
         }
         case "verify_x_reply_text": {
           const postId = String(params.post_id || "");
-          const editor = findReplyDialog(postId).editor;
-          const actual = compact(editor?.innerText || editor?.textContent || "", 10000);
-          const expected = compact(params.text || "", 10000);
-          return { matches: Boolean(editor) && actual === expected, actual, expected, post_id: postId };
+          const located = findReplyDialog(postId);
+          const editor = located.editor;
+          const normalizeEditorText = (value) => String(value ?? "")
+            .replace(/\u00a0/g, " ")
+            .replace(/\r\n?/g, "\n")
+            .replace(/[\t\n\f\v ]+/g, " ")
+            .trim();
+          const actual = normalizeEditorText(editor?.innerText || editor?.textContent || "");
+          const expected = normalizeEditorText(params.text || "");
+          const matches = Boolean(editor) &&
+            located.matched_post === true &&
+            actual.length > 0 &&
+            actual === expected;
+          return {
+            matches,
+            actual,
+            expected,
+            actual_length: actual.length,
+            expected_length: expected.length,
+            editor_found: Boolean(editor),
+            matched_post: located.matched_post === true,
+            match_strategy: located.match_strategy || "unknown",
+            editor_testid: editor?.getAttribute("data-testid") || "",
+            editor_role: editor?.getAttribute("role") || "",
+            post_id: postId
+          };
         }
         case "get_x_reply_submit_button_rect": {
           const postId = String(params.post_id || "");
@@ -1450,9 +1472,22 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
     text: content,
     clear_first: true
   });
-  const verified = await runStage("verify_reply_text", () =>
-    executeInPage("verify_x_reply_text", { post_id: postId, text: content }, tab.id)
-  );
+  const verified = await runStage("verify_reply_text", async () => {
+    const result = await executeInPage(
+      "verify_x_reply_text", { post_id: postId, text: content }, tab.id
+    );
+    traceStage("verify_reply_text_result", "info", {
+      matches: Boolean(result?.matches),
+      editor_found: Boolean(result?.editor_found),
+      matched_post: Boolean(result?.matched_post),
+      actual_length: Number(result?.actual_length || 0),
+      expected_length: Number(result?.expected_length || 0),
+      match_strategy: String(result?.match_strategy || "unknown"),
+      editor_testid: String(result?.editor_testid || ""),
+      editor_role: String(result?.editor_role || "")
+    });
+    return result;
+  });
   if (!verified?.matches) {
     // This branch is strictly before the submit button is resolved or clicked.
     // Close only the reply composer belonging to this exact post, then confirm
