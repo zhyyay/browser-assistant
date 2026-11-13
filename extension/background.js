@@ -2003,6 +2003,44 @@ function nativeRequest(command, params = {}, timeoutMs = 5000) {
   });
 }
 
+async function runPageCommand(command, params = {}) {
+  if (!command || typeof command !== "string") {
+    throw new Error("PAGE_COMMAND_INVALID: 缺少有效的 command");
+  }
+  const authorization = await nativeRequest("authorize_command", { action: command });
+  if (!authorization?.ok || !authorization.result?.authorized) {
+    throw new Error(authorization?.error || "Rust Host rejected the command");
+  }
+  const result = command === "open_automation_window"
+    ? await openAutomationWindow()
+    : command === "get_page_info"
+      ? await getAutomationPageInfo()
+    : command === "reload_page"
+      ? await reloadActiveXHome()
+    : command === "post_x_tweet"
+      ? await executePostXTweet(params)
+    : command === "reply_to_x_post"
+      ? await executeReplyToXPost(params)
+    : command === "get_x_posts"
+      ? await executeAutomationInPage("get_x_posts", params)
+    : command === "scroll_automation"
+      ? await executeAutomationInPage("scroll", params)
+      : await executeAutomationInPage(command, params);
+  return { ok: true, result, authorized_by: "rust-native-host" };
+}
+
+// Service Worker DevTools console cannot deliver runtime.sendMessage() back
+// to the same Service Worker. Expose the same authorized dispatcher directly
+// for diagnostics; this is not a page/content-script API.
+globalThis.browserAssistantDebug = Object.freeze({
+  pageCommand(command, params = {}) {
+    return runPageCommand(command, params);
+  },
+  ping() {
+    return nativeRequest("ping");
+  }
+});
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   (async () => {
     try {
@@ -2016,26 +2054,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         return;
       }
       if (message.type === "page_command") {
-        const authorization = await nativeRequest("authorize_command", { action: message.command });
-        if (!authorization?.ok || !authorization.result?.authorized) {
-          throw new Error(authorization?.error || "Rust Host rejected the command");
-        }
-        const result = message.command === "open_automation_window"
-          ? await openAutomationWindow()
-          : message.command === "get_page_info"
-            ? await getAutomationPageInfo()
-          : message.command === "reload_page"
-            ? await reloadActiveXHome()
-          : message.command === "post_x_tweet"
-            ? await executePostXTweet(message.params || {})
-            : message.command === "reply_to_x_post"
-              ? await executeReplyToXPost(message.params || {})
-              : message.command === "get_x_posts"
-                ? await executeAutomationInPage("get_x_posts", message.params || {})
-                : message.command === "scroll_automation"
-                  ? await executeAutomationInPage("scroll", message.params || {})
-                  : await executeAutomationInPage(message.command, message.params || {});
-        sendResponse({ ok: true, result, authorized_by: "rust-native-host" });
+        sendResponse(await runPageCommand(message.command, message.params || {}));
         return;
       }
       sendResponse({ ok: false, error: "unknown message type" });
