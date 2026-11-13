@@ -190,7 +190,7 @@ async function movePointer(tabId, x, y) {
     await send(tabId, "Input.dispatchMouseEvent", {
       type: "mouseMoved", x: point.x, y: point.y
     });
-    await sleep(12);
+    await sleep(32);
   }
 
   pointerPositions.set(tabId, { x: targetX, y: targetY });
@@ -201,11 +201,11 @@ async function click(tabId, x, y) {
   const movementSteps = await movePointer(tabId, x, y);
   // Short hover and press durations make page state changes less abrupt;
   // this is reliability pacing, not an attempt to conceal automation.
-  await sleep(140);
+  await sleep(320);
   await send(tabId, "Input.dispatchMouseEvent", {
     type: "mousePressed", x, y, button: "left", clickCount: 1
   });
-  await sleep(75);
+  await sleep(120);
   await send(tabId, "Input.dispatchMouseEvent", {
     type: "mouseReleased", x, y, button: "left", clickCount: 1
   });
@@ -431,16 +431,7 @@ async function typeTextBySelector(tabId, params) {
     await clearFocusedEditor(tabId, nextCommandTimeout);
     await sleep(60);
   }
-  await send(
-    tabId,
-    "Input.insertText",
-    { text },
-    nextCommandTimeout()
-  );
-
-  return {
-    performed: true,
-    action: "type_text_selector",
+  // Allow the verified editor to settle before inserting, then give the page\n  // time to reconcile its contenteditable/React state before the caller reads it back.\n  await sleep(250);\n  await send(\n    tabId,\n    "Input.insertText",\n    { text },\n    nextCommandTimeout()\n  );\n  await sleep(450);\n\n  return {\n    performed: true,\n    action: "type_text_selector",
     selector_match_count: 1,
     focused_verified: true,
     cleared_first: params.clear_first !== false,
@@ -501,19 +492,15 @@ async function dispatchCdpInputUnlocked(tabId, params = {}) {
     const y = Number(params.y);
     let wheelEvents = 0;
     while (remaining !== 0) {
-      const deltaY = Math.sign(remaining) * Math.min(Math.abs(remaining), 260);
+      const deltaY = Math.sign(remaining) * Math.min(Math.abs(remaining), 120);
       await send(tabId, "Input.dispatchMouseEvent", {
         type: "mouseWheel", x, y, deltaX: 0, deltaY
       });
       remaining -= deltaY;
       wheelEvents++;
-      await sleep(130);
+      await sleep(420);
     }
-    await sleep(180);
-    return {
-      performed: true,
-      action,
-      wheel_events: wheelEvents,
+    await sleep(350);\n    return {\n      performed: true,\n      action,\n      wheel_events: wheelEvents,
       elapsed_ms: Math.round(performance.now() - started),
       input_mode: "cdp_background_paced"
     };
