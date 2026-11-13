@@ -395,32 +395,36 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
       const replyDialogSelector =
         '[role="dialog"], [aria-modal="true"], [data-testid="sheetDialog"], [data-testid*="modal" i]';
       const findReplyEditor = (dialog) =>
-        [...dialog.querySelectorAll(replyEditorSelector)].find(isVisible) || null;
+        [...dialog.querySelectorAll(replyEditorSelector)]
+          .filter(isVisible)
+          // A broad ancestor can contain both the page composer and a nested
+          // reply modal. Only accept an editor owned by this exact dialog.
+          .find((editor) => editor.closest(replyDialogSelector) === dialog) || null;
       const getReplySubmitButton = (container) =>
         [...container.querySelectorAll('[data-testid="tweetButton"], [data-testid="tweetButtonInline"]')]
-          .find(isVisible) || null;
+          .filter(isVisible)
+          // Do not borrow a submit button from a nested dialog or page composer.
+          .find((button) => button.closest(replyDialogSelector) === container) || null;
       const getSubmitLabel = (button) => compact(
         button?.innerText || button?.textContent || button?.getAttribute("aria-label") || button?.getAttribute("title") || "",
         100
       );
       const isReplyDialog = (dialog, postId = "") => {
-        const button = getReplySubmitButton(dialog);
-        const label = getSubmitLabel(button);
-        if (button) {
-          // X may use the generic tweetButton test ID in reply dialogs, but
-          // tweetButtonInline is reply-specific even when its accessible label
-          // is missing or localized unexpectedly.
-          if (button.getAttribute("data-testid") === "tweetButtonInline") return true;
-          if (label) return /回复|^reply$/i.test(label);
-        }
-        // Some X variants omit visible button text. In that case only accept
-        // a modal that contains the exact target status and a visible editor.
-        const containsTarget = postId && [...dialog.querySelectorAll('a[href*="/status/"]')].some((link) => {
+        // A button label alone is never enough: a generic composer or an
+        // ancestor dialog can contain unrelated reply controls. The exact
+        // target status must be rendered inside this same dialog.
+        if (!postId) return false;
+        const containsTarget = [...dialog.querySelectorAll('a[href*="/status/"]')].some((link) => {
           try {
             return new URL(link.href, location.origin).pathname.match(/\/status\/(\d+)/)?.[1] === postId;
           } catch { return false; }
         });
-        return Boolean(containsTarget && findReplyEditor(dialog));
+        if (!containsTarget) return false;
+        const editor = findReplyEditor(dialog);
+        const button = getReplySubmitButton(dialog);
+        if (!editor || !button) return false;
+        if (button.getAttribute("data-testid") === "tweetButtonInline") return true;
+        return /回复|^reply$/i.test(getSubmitLabel(button));
       };
       const findReplyDialog = (postId) => {
         const dialogs = [...document.querySelectorAll(replyDialogSelector)].filter(isVisible);
