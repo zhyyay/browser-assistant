@@ -469,24 +469,31 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
         }
 
         const composerDialogs = replyDialogs
-          .map((dialog) => ({ dialog, editor: findReplyEditor(dialog), submit: getReplySubmitButton(dialog) }))
-          .filter((item) => item.editor);
-        // The reply action was initiated only after get_x_reply_button_rect
-        // resolved the exact post ID and the caller clicked that button. X
-        // may omit the target status permalink from its modal DOM, so in that
-        // case accept only one visible reply dialog, one visible editor, and
-        // a reply-specific submit control inside that same dialog. This
-        // preserves the click-to-dialog association without guessing among
-        // multiple composers or accepting the global post composer.
+          .map((dialog) => ({
+            dialog,
+            editors: [...dialog.querySelectorAll(replyEditorSelector)].filter(isVisible),
+            submit: getReplySubmitButton(dialog)
+          }))
+          .filter((item) => item.editors.length > 0);
+        // X can keep the global home composer mounted while opening a reply
+        // modal. Therefore the page-wide editor count may be 2 (or more) even
+        // though the reply dialog itself has exactly one editor. The target
+        // reply button was resolved by exact post ID and clicked immediately
+        // before this inspection. If there is exactly one visible reply
+        // dialog, exactly one editor inside that dialog, and its own submit
+        // button is explicitly labelled Reply / 回复 (or is tweetButtonInline),
+        // associate that editor with the just-clicked target. Never use the
+        // page-wide editor count to reject an otherwise unambiguous modal.
         if (composerDialogs.length === 1 &&
-            editors.length === 1 &&
+            composerDialogs[0].editors.length === 1 &&
             composerDialogs[0].submit &&
-            ( /回复|^reply$/i.test(getSubmitLabel(composerDialogs[0].submit)) ||
-              composerDialogs[0].submit.getAttribute("data-testid") === "tweetButtonInline" )) {
+            (/回复|^reply$/i.test(getSubmitLabel(composerDialogs[0].submit)) ||
+              composerDialogs[0].submit.getAttribute("data-testid") === "tweetButtonInline")) {
           return {
-            ...composerDialogs[0],
+            dialog: composerDialogs[0].dialog,
+            editor: composerDialogs[0].editors[0],
             matched_post: true,
-            match_strategy: "single_reply_dialog_after_exact_target_click",
+            match_strategy: "single_reply_dialog_editor_after_exact_target_click",
             visible_dialog_count: dialogs.length,
             reply_dialog_count: replyDialogs.length,
             visible_editor_count: editors.length
