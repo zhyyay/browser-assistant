@@ -318,6 +318,83 @@ async function typeText(tabId, params) {
   };
 }
 
+async function typeTextBySelector(tabId, params) {
+  const selector = String(params.selector || "");
+  const text = String(params.text ?? "");
+  if (!selector || !text) {
+    throw new Error("CDP_TYPE_SELECTOR_INVALID: 缺少唯一编辑框选择器或输入文本");
+  }
+
+  const started = performance.now();
+  const deadline = started + 25000;
+  const nextCommandTimeout = () => {
+    const remaining = Math.floor(deadline - performance.now());
+    if (remaining <= 0) {
+      throw new Error("CDP_TYPE_SELECTOR_DEADLINE: 定位输入步骤总耗时超过 25 秒");
+    }
+    return Math.min(5000, remaining);
+  };
+
+  // Resolve the marked editor in the active page document. Refuse zero or
+  // multiple matches rather than falling back to a page-wide composer.
+  await send(tabId, "DOM.enable", {}, nextCommandTimeout());
+  const documentResult = await send(
+    tabId,
+    "DOM.getDocument",
+    { depth: -1, pierce: true },
+    nextCommandTimeout()
+  );
+  const rootNodeId = Number(documentResult?.root?.nodeId || 0);
+  if (!rootNodeId) throw new Error("CDP_DOM_ROOT_NOT_FOUND: 无法读取页面 DOM 根节点");
+
+  const query = await send(
+    tabId,
+    "DOM.querySelectorAll",
+    { nodeId: rootNodeId, selector },
+    nextCommandTimeout()
+  );
+  const nodeIds = Array.isArray(query?.nodeIds) ? query.nodeIds : [];
+  if (nodeIds.length !== 1) {
+    throw new Error(
+      "CDP_EDITOR_SELECTOR_NOT_UNIQUE: 目标回复编辑框定位数量为 " +
+      nodeIds.length + "，拒绝输入"
+    );
+  }
+
+  await send(tabId, "DOM.focus", { nodeId: nodeIds[0] }, nextCommandTimeout());
+  await sleep(80);
+  const focusCheck = await send(tabId, "Runtime.evaluate", {
+    expression: "document.activeElement?.matches(" + JSON.stringify(selector) + ") === true",
+    returnByValue: true,
+    awaitPromise: false
+  }, nextCommandTimeout());
+  if (focusCheck?.result?.value !== true) {
+    throw new Error("CDP_EDITOR_FOCUS_FAILED: CDP 未能确认焦点位于目标回复编辑框");
+  }
+
+  if (params.clear_first !== false) {
+    await clearFocusedEditor(tabId, nextCommandTimeout);
+    await sleep(60);
+  }
+  await send(
+    tabId,
+    "Input.insertText",
+    { text },
+    nextCommandTimeout()
+  );
+
+  return {
+    performed: true,
+    action: "type_text_selector",
+    selector_match_count: 1,
+    focused_verified: true,
+    cleared_first: params.clear_first !== false,
+    typed_graphemes: splitIntoGraphemes(text).length,
+    elapsed_ms: Math.round(performance.now() - started),
+    input_mode: "cdp_dom_scoped_focus_and_trusted_insert_text"
+  };
+}
+
 async function dispatchCdpInputUnlocked(tabId, params = {}) {
   const action = params.action;
   const started = performance.now();
@@ -334,6 +411,10 @@ async function dispatchCdpInputUnlocked(tabId, params = {}) {
 
   if (action === "type_text") {
     return typeText(tabId, params);
+  }
+
+  if (action === "type_text_selector") {
+    return typeTextBySelector(tabId, params);
   }
 
   if (action === "key_press") {
