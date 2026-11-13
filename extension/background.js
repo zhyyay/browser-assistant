@@ -854,12 +854,20 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
           const located = findReplyDialog(postId);
           const editor = located.editor;
           const normalizeEditorText = (value) => String(value ?? "")
-            .replace(/\u00a0/g, " ")
-            .replace(/\r\n?/g, "\n")
-            .replace(/[\t\n\f\v ]+/g, " ")
+            .normalize("NFKC")
+            .replace(/[\\u200B-\\u200D\\uFEFF]/g, "")
+            .replace(/\\u00a0/g, " ")
+            .replace(/\\r\\n?/g, "\\n")
+            .replace(/[\\t\\n\\f\\v ]+/g, " ")
             .trim();
-          const actual = normalizeEditorText(editor?.innerText || editor?.textContent || "");
           const expected = normalizeEditorText(params.text || "");
+          const editorTextCandidates = [
+            editor?.innerText,
+            editor?.textContent,
+            editor?.getAttribute("aria-label")
+          ].map(normalizeEditorText).filter(Boolean);
+          const actual = editorTextCandidates.find((value) => value === expected) ||
+            editorTextCandidates.sort((a, b) => b.length - a.length)[0] || "";
           const matches = Boolean(editor) &&
             located.matched_post === true &&
             actual.length > 0 &&
@@ -875,7 +883,8 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
             match_strategy: located.match_strategy || "unknown",
             editor_testid: editor?.getAttribute("data-testid") || "",
             editor_role: editor?.getAttribute("role") || "",
-            post_id: postId
+            post_id: postId,
+            editor_text_candidates: editorTextCandidates.map((value) => value.slice(0, 120))
           };
         }
         case "get_x_reply_submit_button_rect": {
@@ -1423,7 +1432,10 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
     y: replyButton.viewport_y + replyButton.height / 2,
     clear_first: false
   });
-  await pause(350);
+  // Keep the interaction deliberately human-paced. The CDP typing itself is fast,
+  // but the page needs time to finish opening the composer and updating X's
+  // internal editor state before we inspect it.
+  await pause(900);
 
   let editor = null;
   let lastError = null;
@@ -1464,7 +1476,7 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
     );
   }
 
-  await pause(250);
+  await pause(700);
   await runPacedInput("type_reply_text", {
     action: "type_text",
     x: editor.viewport_x + editor.width / 2,
@@ -1473,20 +1485,29 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
     clear_first: true
   });
   const verified = await runStage("verify_reply_text", async () => {
-    const result = await executeInPage(
-      "verify_x_reply_text", { post_id: postId, text: content }, tab.id
-    );
-    traceStage("verify_reply_text_result", "info", {
-      matches: Boolean(result?.matches),
-      editor_found: Boolean(result?.editor_found),
-      matched_post: Boolean(result?.matched_post),
-      actual_length: Number(result?.actual_length || 0),
-      expected_length: Number(result?.expected_length || 0),
-      match_strategy: String(result?.match_strategy || "unknown"),
-      editor_testid: String(result?.editor_testid || ""),
-      editor_role: String(result?.editor_role || "")
-    });
-    return result;
+    let lastResult = null;
+    // X can update the contenteditable DOM a moment after the CDP insertText
+    // command completes. Re-read it a few times instead of treating the first
+    // DOM snapshot as authoritative.
+    for (let attempt = 1; attempt <= 4; attempt++) {
+      lastResult = await executeInPage(
+        "verify_x_reply_text", { post_id: postId, text: content }, tab.id
+      );
+      traceStage("verify_reply_text_result", "info", {
+        attempt,
+        matches: Boolean(lastResult?.matches),
+        editor_found: Boolean(lastResult?.editor_found),
+        matched_post: Boolean(lastResult?.matched_post),
+        actual_length: Number(lastResult?.actual_length || 0),
+        expected_length: Number(lastResult?.expected_length || 0),
+        match_strategy: String(lastResult?.match_strategy || "unknown"),
+        editor_testid: String(lastResult?.editor_testid || ""),
+        editor_role: String(lastResult?.editor_role || "")
+      });
+      if (lastResult?.matches) return lastResult;
+      if (attempt < 4) await pause(350);
+    }
+    return lastResult;
   });
   if (!verified?.matches) {
     // This branch is strictly before the submit button is resolved or clicked.
@@ -1522,7 +1543,8 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
   );
 
   // Let the verified draft settle before the single submit action.
-  await pause(500);
+  // Do not rush the click immediately after validation.
+  await pause(1200);
   // Submit once only. An uncertain confirmation must never trigger an automatic retry.
   await runPacedInput("submit_reply", {
     action: "click",
