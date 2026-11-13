@@ -94,7 +94,7 @@ async function ensureAttached(tabId) {
   }
 }
 
-async function send(tabId, method, params = {}) {
+async function send(tabId, method, params = {}, timeoutMs = 15000) {
   const previousCommand = commandInFlight.get(tabId);
   if (previousCommand) {
     throw new Error(
@@ -121,7 +121,7 @@ async function send(tabId, method, params = {}) {
 
     return await withTimeout(
       commandPromise,
-      15000,
+      timeoutMs,
       `CDP_COMMAND_TIMEOUT: tab_id=${tabId}, method=${method}`
     );
   } catch (error) {
@@ -212,10 +212,10 @@ async function click(tabId, x, y) {
   return movementSteps;
 }
 
-async function clearFocusedEditor(tabId) {
+async function clearFocusedEditor(tabId, timeoutForNextCommand) {
   const key = async (type, keyName, code, vk, modifiers = 0) => send(tabId, "Input.dispatchKeyEvent", {
     type, key: keyName, code, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk, modifiers
-  });
+  }, timeoutForNextCommand());
   await key("keyDown", "Control", "ControlLeft", 17, 2);
   await key("keyDown", "a", "KeyA", 65, 2);
   await key("keyUp", "a", "KeyA", 65, 2);
@@ -243,27 +243,78 @@ async function typeText(tabId, params) {
   if (!Number.isFinite(x) || !Number.isFinite(y) || !text) {
     throw new Error("CDP_TYPE_TEXT_INVALID: 编辑器坐标或输入文本无效");
   }
+
   const started = performance.now();
-  const movementSteps = await click(tabId, x, y);
-  await sleep(160);
+  const deadline = started + 25000;
+  const step = async (name, operation) => {
+    const stepStarted = performance.now();
+    console.info("[Browser Assistant][CDP Type]", {
+      stage: name, phase: "start", at: new Date().toISOString()
+    });
+    try {
+      const result = await operation();
+      console.info("[Browser Assistant][CDP Type]", {
+        stage: name, phase: "done",
+        elapsed_ms: Math.round(performance.now() - stepStarted)
+      });
+      return result;
+    } catch (error) {
+      console.warn("[Browser Assistant][CDP Type]", {
+        stage: name, phase: "failed",
+        elapsed_ms: Math.round(performance.now() - stepStarted),
+        error: String(error?.message || error).slice(0, 400)
+      });
+      throw error;
+    }
+  };
+  const nextCommandTimeout = () => {
+    const remaining = Math.floor(deadline - performance.now());
+    if (remaining <= 0) {
+      throw new Error("CDP_TYPE_TEXT_DEADLINE: 输入步骤总耗时超过 25 秒，未继续操作");
+    }
+    return Math.min(5000, remaining);
+  };
+
+  // Use one direct pointer move instead of the previous 4–18-step animated
+  // movement. The old movement generated many serial CDP round trips and was
+  // responsible for very long input-stage delays on some machines.
+  await step("focus_editor", async () => {
+    const timeout = nextCommandTimeout();
+    await send(tabId, "Input.dispatchMouseEvent", {
+      type: "mouseMoved", x, y
+    }, timeout);
+    await sleep(60);
+    await send(tabId, "Input.dispatchMouseEvent", {
+      type: "mousePressed", x, y, button: "left", clickCount: 1
+    }, nextCommandTimeout());
+    await sleep(45);
+    await send(tabId, "Input.dispatchMouseEvent", {
+      type: "mouseReleased", x, y, button: "left", clickCount: 1
+    }, nextCommandTimeout());
+  });
+
   if (params.clear_first !== false) {
-    await clearFocusedEditor(tabId);
-    await sleep(100);
+    await step("clear_editor", async () => {
+      await clearFocusedEditor(tabId, nextCommandTimeout);
+      await sleep(60);
+    });
   }
 
-  // Insert the complete Unicode string in one CDP command. Sending one
-  // command per grapheme creates dozens of round trips and can leave the
-  // composer empty when a single command stalls mid-sequence.
-  await send(tabId, "Input.insertText", { text });
+  // Insert the complete Unicode string in one CDP command. Every command in
+  // this input sequence has a short remaining-budget timeout; a timeout fails
+  // closed and prevents the caller from reaching text verification or submit.
+  await step("insert_text", async () => {
+    await send(tabId, "Input.insertText", { text }, nextCommandTimeout());
+  });
 
   return {
     performed: true,
     action: "type_text",
     cleared_first: params.clear_first !== false,
     typed_graphemes: splitIntoGraphemes(text).length,
-    movement_steps: movementSteps,
+    movement_steps: 1,
     elapsed_ms: Math.round(performance.now() - started),
-    input_mode: "cdp_single_insert_text"
+    input_mode: "cdp_direct_click_single_insert_text"
   };
 }
 
