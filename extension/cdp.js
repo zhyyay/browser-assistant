@@ -431,7 +431,20 @@ async function typeTextBySelector(tabId, params) {
     await clearFocusedEditor(tabId, nextCommandTimeout);
     await sleep(60);
   }
-  // Allow the verified editor to settle before inserting, then give the page\n  // time to reconcile its contenteditable/React state before the caller reads it back.\n  await sleep(250);\n  await send(\n    tabId,\n    "Input.insertText",\n    { text },\n    nextCommandTimeout()\n  );\n  await sleep(450);\n\n  return {\n    performed: true,\n    action: "type_text_selector",
+  // Allow the verified editor to settle before inserting, then give the page
+  // time to reconcile its contenteditable/React state before the caller reads it back.
+  await sleep(250);
+  await send(
+    tabId,
+    "Input.insertText",
+    { text },
+    nextCommandTimeout()
+  );
+  await sleep(450);
+
+  return {
+    performed: true,
+    action: "type_text_selector",
     selector_match_count: 1,
     focused_verified: true,
     cleared_first: params.clear_first !== false,
@@ -500,7 +513,11 @@ async function dispatchCdpInputUnlocked(tabId, params = {}) {
       wheelEvents++;
       await sleep(420);
     }
-    await sleep(350);\n    return {\n      performed: true,\n      action,\n      wheel_events: wheelEvents,
+    await sleep(350);
+    return {
+      performed: true,
+      action,
+      wheel_events: wheelEvents,
       elapsed_ms: Math.round(performance.now() - started),
       input_mode: "cdp_background_paced"
     };
