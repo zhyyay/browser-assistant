@@ -240,6 +240,9 @@ async function typeText(tabId, params) {
   const x = Number(params.x);
   const y = Number(params.y);
   const text = String(params.text ?? "");
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !text) {
+    throw new Error("CDP_TYPE_TEXT_INVALID: 编辑器坐标或输入文本无效");
+  }
   const started = performance.now();
   const movementSteps = await click(tabId, x, y);
   await sleep(160);
@@ -248,22 +251,19 @@ async function typeText(tabId, params) {
     await sleep(100);
   }
 
-  const graphemes = splitIntoGraphemes(text);
-  for (const grapheme of graphemes) {
-    await send(tabId, "Input.insertText", { text: grapheme });
-    // A steady cadence keeps input events separated so the editor can process
-    // IME/CJK and rich-text updates reliably. Punctuation gets a brief pause.
-    await sleep(isSentencePunctuation(grapheme) ? 125 : 42);
-  }
+  // Insert the complete Unicode string in one CDP command. Sending one
+  // command per grapheme creates dozens of round trips and can leave the
+  // composer empty when a single command stalls mid-sequence.
+  await send(tabId, "Input.insertText", { text });
 
   return {
     performed: true,
     action: "type_text",
     cleared_first: params.clear_first !== false,
-    typed_graphemes: graphemes.length,
+    typed_graphemes: splitIntoGraphemes(text).length,
     movement_steps: movementSteps,
     elapsed_ms: Math.round(performance.now() - started),
-    input_mode: "cdp_background_paced"
+    input_mode: "cdp_single_insert_text"
   };
 }
 
