@@ -855,10 +855,10 @@ async function executeInPage(command, params = {}, fixedTabId = null) {
           const editor = located.editor;
           const normalizeEditorText = (value) => String(value ?? "")
             .normalize("NFKC")
-            .replace(/[\\u200B-\\u200D\\uFEFF]/g, "")
-            .replace(/\\u00a0/g, " ")
-            .replace(/\\r\\n?/g, "\\n")
-            .replace(/[\\t\\n\\f\\v ]+/g, " ")
+            .replace(/[\u200B-\u200D\uFEFF]/g, "")
+            .replace(/\u00a0/g, " ")
+            .replace(/\r\n?/g, "\n")
+            .replace(/[\t\n\f\v ]+/g, " ")
             .trim();
           const expected = normalizeEditorText(params.text || "");
           const editorTextCandidates = [
@@ -1484,6 +1484,9 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
     text: content,
     clear_first: true
   });
+  // Give X time to reconcile the contenteditable DOM and its React state
+  // before reading the draft back.
+  await pause(650);
   const verified = await runStage("verify_reply_text", async () => {
     let lastResult = null;
     // X can update the contenteditable DOM a moment after the CDP insertText
@@ -1510,24 +1513,38 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
     return lastResult;
   });
   if (!verified?.matches) {
-    // This branch is strictly before the submit button is resolved or clicked.
-    // Close only the reply composer belonging to this exact post, then confirm
-    // it is gone before allowing the desktop runner to continue to another post.
-    let closeResult;
+    // Do not close a composer containing a draft just because a DOM text
+    // snapshot disagrees. Keep it visible for diagnosis/manual recovery, and
+    // stop this task before any submit click. The next task must not inherit
+    // this still-open composer.
+    let structure = null;
     try {
-      closeResult = await closeReplyComposerSafely(tab.id, postId);
-    } catch (error) {
-      closeResult = { closed: false, error: String(error?.message || error) };
-    }
-    if (!closeResult?.closed) {
-      throw new Error(
-        "REPLY_COMPOSER_CLOSE_FAILED: 回复文本校验失败且无法确认关闭当前回复框；" +
-        "未点击发送，必须停止自动化。close_result=" + JSON.stringify(closeResult)
+      structure = await executeInPage(
+        "get_x_reply_submit_button_rect", { post_id: postId }, tab.id
       );
+    } catch (error) {
+      structure = { available: false, error: String(error?.message || error).slice(0, 300) };
     }
+    traceStage("reply_draft_verification_blocked", "info", {
+      editor_found: Boolean(verified?.editor_found),
+      matched_post: Boolean(verified?.matched_post),
+      actual_length: Number(verified?.actual_length || 0),
+      expected_length: Number(verified?.expected_length || 0),
+      candidate_count: Array.isArray(verified?.editor_text_candidates)
+        ? verified.editor_text_candidates.length : 0,
+      submit_structure_available: Boolean(structure && !structure.error)
+    });
     throw new Error(
-      "REPLY_CONTENT_VERIFY_FAILED: 回复内容输入后校验不一致，未提交；" +
-      "COMPOSER_CLOSED=" + JSON.stringify(closeResult)
+      "REPLY_CONTENT_VERIFY_FAILED: 回复文字回读仍不一致，未点击发送；" +
+      "已保留当前回复框和草稿供检查。verification=" +
+      JSON.stringify({
+        editor_found: Boolean(verified?.editor_found),
+        matched_post: Boolean(verified?.matched_post),
+        actual_length: Number(verified?.actual_length || 0),
+        expected_length: Number(verified?.expected_length || 0),
+        candidates: verified?.editor_text_candidates || [],
+        submit_structure_available: Boolean(structure && !structure.error)
+      })
     );
   }
 
