@@ -1570,6 +1570,45 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
     const result = await performCdpInput(input, tab.id);
     return result;
   });
+  // Refresh the X home timeline only after a reply has been positively confirmed.
+  // A refresh failure must not turn a confirmed send into an apparent send failure.
+  const refreshTimelineAfterConfirmedReply = async (result) => {
+    try {
+      const currentTab = await chrome.tabs.get(tab.id);
+      const currentUrl = new URL(currentTab.url || "");
+      const currentPath = currentUrl.pathname.endsWith("/")
+        ? currentUrl.pathname.slice(0, -1)
+        : currentUrl.pathname;
+      if (currentUrl.hostname !== "x.com" || currentPath !== "/home") {
+        const skipped = {
+          status: "skipped",
+          reason: "page_not_x_home",
+          url: currentTab.url || ""
+        };
+        traceStage("refresh_timeline_after_reply", "info", skipped);
+        return { ...result, timeline_refresh: skipped };
+      }
+
+      traceStage("refresh_timeline_after_reply", "start");
+      await chrome.tabs.reload(tab.id);
+      const reloadedTab = await waitForAutomationTabReady(tab.id, 30000);
+      const refreshed = {
+        status: "reloaded",
+        tab_id: reloadedTab.id,
+        url: reloadedTab.url || "",
+        page_status: reloadedTab.status || ""
+      };
+      traceStage("refresh_timeline_after_reply", "done", refreshed);
+      return { ...result, timeline_refresh: refreshed };
+    } catch (error) {
+      const failed = {
+        status: "failed",
+        error: String(error?.message || error).slice(0, 500)
+      };
+      traceStage("refresh_timeline_after_reply", "failed", failed);
+      return { ...result, timeline_refresh: failed };
+    }
+  };
 
   const pageState = await executeInPage("get_dom_text", { max_chars: 16000 }, tab.id);
   if (/rate limit exceeded|too many requests|try again later|请求过于频繁|操作过于频繁|暂时限制了部分功能/i.test(pageState?.text || "")) {
@@ -1814,7 +1853,7 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
 
   if (firstConfirmation.source === "network" &&
       firstConfirmation.result?.status === "confirmed") {
-    return {
+    return await refreshTimelineAfterConfirmedReply({
       status: "sent",
       submitted: true,
       confirmed: true,
@@ -1825,19 +1864,19 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
       message: "已通过 X CreateTweet 网络响应确认回复已发送",
       interaction_trace: interactionTrace,
       input_mode: "chrome_devtools_protocol_paced"
-    };
+    });
   }
 
   if (firstConfirmation.source === "page" &&
       firstConfirmation.result?.status === "sent") {
     networkCapture.cancel();
-    return {
+    return await refreshTimelineAfterConfirmedReply({
       ...firstConfirmation.result,
       confirmation_source: "x_success_toast",
       network_confirmation: { status: "not_needed_to_confirm" },
       interaction_trace: interactionTrace,
       input_mode: "chrome_devtools_protocol_paced"
-    };
+    });
   }
 
   const [networkSettled, pageSettled] = await Promise.allSettled([
@@ -1859,7 +1898,7 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
       };
 
   if (networkResult.status === "confirmed") {
-    return {
+    return await refreshTimelineAfterConfirmedReply({
       status: "sent",
       submitted: true,
       confirmed: true,
@@ -1870,17 +1909,17 @@ async function executeReplyToXPost(params = {}, fixedTabId = null) {
       message: "已通过 X CreateTweet 网络响应确认回复已发送",
       interaction_trace: interactionTrace,
       input_mode: "chrome_devtools_protocol_paced"
-    };
+    });
   }
 
   if (pageResult?.status === "sent") {
-    return {
+    return await refreshTimelineAfterConfirmedReply({
       ...pageResult,
       confirmation_source: "x_success_toast",
       network_confirmation: networkResult,
       interaction_trace: interactionTrace,
       input_mode: "chrome_devtools_protocol_paced"
-    };
+    });
   }
 
   return {
